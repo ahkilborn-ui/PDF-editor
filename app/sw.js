@@ -5,7 +5,7 @@
 // app opens and works with no internet connection. A new build has a new
 // VERSION, which makes the browser fetch the new files and drop the old ones.
 
-const VERSION = '1fd935283c40';
+const VERSION = '112a7e8b5f85';
 const FILES = [
   "./",
   "app.js",
@@ -19,6 +19,8 @@ const FILES = [
   "install.js",
   "manifest.webmanifest",
   "styles.css",
+  "vendor/@neslinesli93/qpdf-wasm@0.3.0/dist/qpdf.js",
+  "vendor/@neslinesli93/qpdf-wasm@0.3.0/dist/qpdf.wasm",
   "vendor/@tesseract.js-data/eng@1.0.0/4.0.0_best_int/eng.traineddata.gz",
   "vendor/docx-preview@0.4.0/dist/docx-preview.min.js",
   "vendor/heic-to@1.5.2/dist/iife/heic-to.js",

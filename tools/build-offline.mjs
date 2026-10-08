@@ -39,6 +39,8 @@ const VENDOR = [
   'jszip@3.10.1/dist/jszip.min.js',
   'docx-preview@0.4.0/dist/docx-preview.min.js',
   'html2canvas@1.4.1/dist/html2canvas.min.js',
+  '@neslinesli93/qpdf-wasm@0.3.0/dist/qpdf.js',
+  '@neslinesli93/qpdf-wasm@0.3.0/dist/qpdf.wasm',
 ];
 
 const SHARED = ['app.js', 'convert.js', 'styles.css'];

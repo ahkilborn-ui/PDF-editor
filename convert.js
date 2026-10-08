@@ -18,6 +18,8 @@
     jszip: lib('jszip@3.10.1/dist/jszip.min.js'),
     docxPreview: lib('docx-preview@0.4.0/dist/docx-preview.min.js'),
     html2canvas: lib('html2canvas@1.4.1/dist/html2canvas.min.js'),
+    qpdfJs: lib('@neslinesli93/qpdf-wasm@0.3.0/dist/qpdf.js'),
+    qpdfWasm: lib('@neslinesli93/qpdf-wasm@0.3.0/dist/qpdf.wasm'),
   };
 
   const PX_TO_PT = 0.75;                 // CSS pixel (1/96 in) -> PDF point (1/72 in)
@@ -371,6 +373,48 @@
     return words;
   }
 
+  // ---------------------------------------------------- protected PDFs
+  //
+  // pdf-lib can't save encrypted ("protected") PDFs, so before saving we let
+  // qpdf (https://qpdf.sourceforge.io, compiled to WebAssembly, runs locally)
+  // remove the encryption, and optionally put a password back afterwards.
+
+  async function runQpdf(args, input) {
+    await loadScript(CDN.qpdfJs);
+    const createQpdf = window.Module; // qpdf.js defines this global
+    const messages = [];
+    const qpdf = await createQpdf({
+      locateFile: () => CDN.qpdfWasm,
+      print: () => {},
+      printErr: (text) => messages.push(text),
+    });
+    qpdf.FS.writeFile('/in.pdf', input);
+    let code;
+    try {
+      code = qpdf.callMain(args);
+    } catch (err) {
+      code = typeof err?.status === 'number' ? err.status : 2;
+      if (typeof err?.status !== 'number') messages.push(String(err));
+    }
+    // qpdf exit codes: 0 = fine, 3 = fine with warnings, 2 = failed.
+    if (code !== 0 && code !== 3) {
+      const msg = messages.join(' ');
+      throw new Error(/invalid password/i.test(msg) ? 'the password is wrong' : msg || `qpdf failed (${code})`);
+    }
+    return qpdf.FS.readFile('/out.pdf');
+  }
+
+  /** Returns a copy of the PDF with its encryption and edit restrictions removed. */
+  function unlockPdf(bytes, password = '') {
+    return runQpdf(['--decrypt', `--password=${password}`, '/in.pdf', '/out.pdf'], bytes);
+  }
+
+  /** Returns a copy of the PDF that needs `password` to open (AES-256). */
+  function lockPdf(bytes, password) {
+    return runQpdf(['/in.pdf', '--encrypt', `--user-password=${password}`, `--owner-password=${password}`,
+      '--bits=256', '--', '/out.pdf'], bytes);
+  }
+
   // ------------------------------------------------------------- entry
 
   /** Returns PDF bytes for a supported non-PDF file. */
@@ -384,5 +428,5 @@
     throw new Error('this file type isn\'t supported');
   }
 
-  window.PdfConvert = { kindOf, toPdf, makeSanitizer, writeInvisibleText };
+  window.PdfConvert = { kindOf, toPdf, makeSanitizer, writeInvisibleText, unlockPdf, lockPdf };
 })();

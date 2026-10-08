@@ -24,7 +24,7 @@ It can:
 | Internet | Needed. It downloads its PDF, OCR and conversion tools when you use them. | Only for the first visit. After that it works with no connection. |
 | Looks like | A browser tab | Its own window, with an icon in the Start menu, taskbar, Dock or Launchpad |
 | Opening files | **Open** button, or drag files in | The same, plus **Open with → PDF Editor** from File Explorer or Finder (Chrome and Edge) |
-| Space used | Nothing stored | About 18 MB stored by the browser |
+| Space used | Nothing stored | About 19 MB stored by the browser |
 
 Both have exactly the same editing features.
 
@@ -109,6 +109,14 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 - **Google Docs**: in Google Docs, choose **File → Download → PDF Document** (or **Microsoft Word (.docx)**) and open that file here.
 - **Old `.doc` files** aren't supported. Open them in Word or Google Docs and save as `.docx` or PDF first.
 
+### Protected PDFs
+
+You can edit and save protected PDFs, for example court or agency documents that block editing or copying.
+
+- **Files that only restrict editing, copying or printing** open normally. When you save, the restrictions are removed so your changes can be saved, and the saved copy has no restrictions.
+- **Files that need a password to open** ask for it when you open them. When you save, you're asked whether the saved file should need the same password. Choose **Yes, keep password** or **No password**.
+- The unlocking uses [qpdf](https://qpdf.sourceforge.io/), running inside your browser. Your file and password never leave your computer.
+
 ### Making a scanned PDF searchable
 
 Click **Make searchable (OCR)**. The editor finds the pages that have no real text (usually scans or photos) and reads them with [Tesseract](https://github.com/naptha/tesseract.js). It then adds an invisible text layer on top of the image, which is the same method scanners and tools like OCRmyPDF use. The page looks exactly the same, but you can now search, select and copy its words. Click **Save** to keep the searchable version.
@@ -123,7 +131,7 @@ In the browser version, the first run downloads the English language data (about
 - Typed text uses Helvetica, which only covers Latin characters. Other characters are saved as `?`.
 - OCR is English only.
 - Converted Word pages are stored as high-resolution pictures with the real text invisibly on top. That makes them look right and searchable, but the text isn't perfectly sharp when you zoom far in. Fonts that aren't on your computer, such as Calibri on a Mac, are replaced with similar ones, so line breaks can differ slightly from Word. For an exact copy, use **File → Save as PDF** in Word, or **File → Download → PDF** in Google Docs.
-- Password-protected or encrypted PDFs can be viewed but not saved. As a workaround, use your browser's **Print → Save as PDF** to make an unprotected copy first.
+
 
 ## How it works
 
@@ -133,6 +141,7 @@ The editor is four files at the top of the repository: `index.html`, `styles.css
 - [pdf-lib](https://pdf-lib.js.org/) writes your edits, merges and page changes into the PDF when you save.
 - [tesseract.js](https://tesseract.projectnaptha.com/) does the OCR.
 - [heic-to](https://github.com/hoppergee/heic-to) reads iPhone HEIC photos, and [docx-preview](https://github.com/VolodymyrBaydalka/docxjs) with [html2canvas](https://html2canvas.hertzen.com/) lays out and captures Word documents.
+- [qpdf](https://qpdf.sourceforge.io/), compiled to run in the browser, unlocks protected PDFs so they can be saved, and adds a password back if you ask it to.
 
 The browser version loads these libraries from the jsDelivr CDN. The installable app in `app/` is built from the same four files by `tools/build-offline.mjs`. The build copies every library into `app/vendor/` and adds:
 

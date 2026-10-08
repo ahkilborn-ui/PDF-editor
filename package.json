@@ -6,6 +6,7 @@
     "build": "node tools/build-offline.mjs"
   },
   "devDependencies": {
+    "@neslinesli93/qpdf-wasm": "0.3.0",
     "@tesseract.js-data/eng": "1.0.0",
     "docx-preview": "0.4.0",
     "heic-to": "1.5.2",

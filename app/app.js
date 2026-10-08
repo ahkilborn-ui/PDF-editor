@@ -163,7 +163,7 @@
     return { x: (evt.clientX - r.left) / state.zoom, y: (evt.clientY - r.top) / state.zoom };
   }
 
-  const { kindOf, toPdf: convertToPdf, makeSanitizer, writeInvisibleText } = window.PdfConvert;
+  const { kindOf, toPdf: convertToPdf, makeSanitizer, writeInvisibleText, unlockPdf, lockPdf } = window.PdfConvert;
 
   // The tool whose color an annotation type uses.
   function toolFor(type) {
@@ -329,11 +329,16 @@
         cMapPacked: true,
         standardFontDataUrl: CDN.pdfjsFonts,
       });
+      let password = null; // remembered so the file can be unlocked when saving
       task.onPassword = (provide, reason) => {
         const again = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD;
         const pw = prompt(again ? `Wrong password for ${file.name}. Try again:` : `${file.name} is password protected. Password:`);
-        if (pw == null) task.destroy();
-        else provide(pw);
+        if (pw == null) {
+          task.destroy();
+        } else {
+          password = pw;
+          provide(pw);
+        }
       };
       const doc = await task.promise;
       if (token !== state.loadToken) {
@@ -341,7 +346,7 @@
         return 0;
       }
       const src = state.sources.length;
-      state.sources.push({ name: file.name || 'document.pdf', bytes, doc, converted: kind !== 'pdf' });
+      state.sources.push({ name: file.name || 'document.pdf', bytes, doc, converted: kind !== 'pdf', password });
 
       const newPages = [];
       for (let i = 0; i < doc.numPages; i++) {
@@ -890,15 +895,22 @@
 
   const confirmUi = {
     dialog: $('#confirm-dialog'),
+    title: $('#confirm-title'),
     message: $('#confirm-message'),
     yes: $('#confirm-yes'),
     no: $('#confirm-no'),
   };
 
   // Ask a yes/no question. Resolves true for Yes, false for No or Esc.
-  function askConfirm(message) {
+  // Ask a question with two buttons; by default "Are you sure?" with Yes / No.
+  function askConfirm(message, { title = 'Are you sure?', yes = 'Yes', no = 'No', danger = true } = {}) {
     return new Promise((resolve) => {
+      confirmUi.title.textContent = title;
       confirmUi.message.textContent = message;
+      confirmUi.yes.textContent = yes;
+      confirmUi.no.textContent = no;
+      confirmUi.yes.classList.toggle('danger-solid', danger);
+      confirmUi.yes.classList.toggle('primary', !danger);
       const finish = (answer) => {
         confirmUi.yes.onclick = confirmUi.no.onclick = confirmUi.dialog.oncancel = null;
         confirmUi.dialog.close();
@@ -1680,12 +1692,19 @@
     try {
       return await PDFLib.PDFDocument.load(source.bytes);
     } catch (err) {
-      if (/encrypt/i.test(err.message)) {
-        throw new Error(`${source.name} is encrypted/protected, and saving changes to protected PDFs is not supported. ` +
-          'Try "Print → Save as PDF" in your browser to make an unprotected copy first.');
-      }
-      throw err;
+      if (!/encrypt/i.test(err.message)) throw err;
     }
+    // Protected (encrypted) PDF: remove the protection first, using the
+    // password typed when it was opened (none is needed for files that only
+    // restrict editing or printing).
+    setStatus(`Unlocking ${source.name} so it can be saved…`);
+    try {
+      source.unlocked ??= await unlockPdf(source.bytes, source.password || '');
+    } catch (err) {
+      throw new Error(`couldn't unlock ${source.name}: ${err.message}`);
+    }
+    source.wasProtected = true;
+    return PDFLib.PDFDocument.load(source.unlocked);
   }
 
   // Build the output document with the pages in state.order. When the first
@@ -1821,11 +1840,31 @@
         }
       });
 
-      const bytes = await out.save();
+      let bytes = await out.save();
       const name = outputName();
+
+      // If a file needed a password to open, offer to keep that password on
+      // the saved copy. (Edit/print restrictions are not put back.)
+      const used = [...new Set(pages().map((p) => state.sources[p.src]))];
+      const withPassword = used.find((src) => src.password);
+      let note = used.some((src) => src.wasProtected) ? ' Its protection was removed so it could be edited.' : '';
+      if (withPassword) {
+        setStatus('Saving…');
+        const keep = await askConfirm(
+          `${withPassword.name} needed a password to open. Should the saved file need the same password?`,
+          { title: 'Keep the password?', yes: 'Yes, keep password', no: 'No password', danger: false });
+        if (keep) {
+          setStatus('Adding password…');
+          bytes = await lockPdf(bytes, withPassword.password);
+          note = ' It needs the same password to open.';
+        } else {
+          note = ' It opens without a password.';
+        }
+      }
+
       download(bytes, name);
       state.dirty = false;
-      setStatus(`Saved ${name}.`);
+      setStatus(`Saved ${name}.${note}`);
     } catch (err) {
       console.error(err);
       setStatus(`Save failed: ${err.message || err}`);
