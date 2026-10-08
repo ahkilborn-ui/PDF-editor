@@ -4,12 +4,17 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PDF Editor</title>
+  <meta name="theme-color" content="#2563eb">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <script>window.PDF_EDITOR_LIB_BASE = 'vendor/';</script>
   <link rel="icon" href="icons/favicon-32.png">
   <link rel="stylesheet" href="styles.css">
-  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <script src="vendor/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="vendor/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
   <script src="convert.js" defer></script>
   <script src="app.js" defer></script>
+  <script src="install.js" defer></script>
 </head>
 <body data-tool="select">
   <header class="toolbar">
@@ -96,7 +101,6 @@
         <li><strong>Make searchable</strong> — reads scanned pages (OCR) so <kbd>Ctrl</kbd>+<kbd>F</kbd> finds their words.</li>
       </ul>
       <p class="muted">Everything runs in your browser. Your files are never uploaded.</p>
-      <p class="muted" data-browser-only>Want it to work without internet? <a href="app/">Get the installable offline app</a>.</p>
     </div>
     <div id="pages"></div>
   </main>

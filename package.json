@@ -1,0 +1,19 @@
+{
+  "name": "pdf-editor",
+  "private": true,
+  "description": "Browser-based PDF editor. `npm run build` regenerates the installable offline app in app/.",
+  "scripts": {
+    "build": "node tools/build-offline.mjs"
+  },
+  "devDependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "docx-preview": "0.4.0",
+    "heic-to": "1.5.2",
+    "html2canvas": "1.4.1",
+    "jszip": "3.10.1",
+    "pdf-lib": "1.17.1",
+    "pdfjs-dist": "4.10.38",
+    "tesseract.js": "5.1.1",
+    "tesseract.js-core": "5.1.1"
+  }
+}

@@ -1,6 +1,6 @@
 # PDF Editor
 
-A small PDF editor that runs in your web browser. You don't install anything, and your files never leave your computer.
+A small PDF editor that runs in your web browser, either as a normal web page or as an app you install on Windows or Mac that works offline. Your files never leave your computer.
 
 It can:
 
@@ -15,17 +15,60 @@ It can:
 - **Delete, or move pages** up and down, using the buttons above each page.
 - **Make searchable (OCR)**: reads the words on scanned pages so <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>⌘</kbd>+<kbd>F</kbd> on Mac) can find them, both in the editor and in the saved file in any PDF reader.
 
+## Two versions
+
+| | Browser version | Installable offline app |
+|---|---|---|
+| Where | `index.html` | the `app/` folder |
+| Web address (once GitHub Pages is on) | https://ahkilborn-ui.github.io/PDF-editor/ | https://ahkilborn-ui.github.io/PDF-editor/app/ |
+| Internet | Needed. It downloads its PDF, OCR and conversion tools when you use them. | Only for the first visit. After that it works with no connection. |
+| Looks like | A browser tab | Its own window, with an icon in the Start menu, taskbar, Dock or Launchpad |
+| Opening files | **Open** button, or drag files in | The same, plus **Open with → PDF Editor** from File Explorer or Finder (Chrome and Edge) |
+| Space used | Nothing stored | About 18 MB stored by the browser |
+
+Both have exactly the same editing features.
+
+### Turning on GitHub Pages (one time)
+
+Both web addresses work only after this.
+
+1. On GitHub, open this repository and go to **Settings → Pages**.
+2. Under **Build and deployment → Source**, choose **Deploy from a branch**.
+3. Pick the branch that has these files (for example `main`), choose the **/ (root)** folder, and click **Save**.
+4. Wait a minute or two, then refresh. The address appears at the top of the page.
+
+### Using the browser version
+
+Open https://ahkilborn-ui.github.io/PDF-editor/ in Chrome, Edge, Firefox or Safari.
+
+You can also use it without GitHub Pages: download this repository as a ZIP, unzip it, and double-click `index.html`. That still needs an internet connection for the PDF tools.
+
+### Installing the offline app
+
+Open https://ahkilborn-ui.github.io/PDF-editor/app/ once while you're online. Wait until the bar at the bottom says **Ready — works offline**, then install it.
+
+**Windows or Mac, with Google Chrome**
+- Click **Install app** in the toolbar, or the install icon at the right end of the address bar.
+- Or use the **⋮** menu → **Cast, save, and share** → **Install page as app…**
+- It then appears in the Start menu or taskbar on Windows, and in Launchpad and the Applications folder on Mac.
+
+**Windows or Mac, with Microsoft Edge**
+- Click **Install app** in the toolbar, or use the **⋯** menu → **Apps** → **Install this site as an app**.
+
+**Mac, with Safari (macOS Sonoma 14 or newer)**
+- In the menu bar, choose **File → Add to Dock**. The **Install app** button shows these instructions too.
+
+Firefox can't install web apps, but the offline app still works offline in a Firefox tab once you've opened it.
+
+**Updates** happen automatically. When you open the installed app while online, it quietly downloads any new version and uses it from the next time you open it.
+
+**To uninstall**, open the app and use the **⋮** or **⋯** menu at the top of its window → **Uninstall PDF Editor**. In Safari, remove it from the Dock and delete it from the Applications folder.
+
 ## How to use it
 
-1. Download or clone this repository.
-2. Double-click `index.html` to open it in Chrome, Edge, Firefox or Safari.
-3. Click **Open** (or drag files onto the window). You can open PDFs, photos or Word `.docx` files. To merge, select several files at once, or click **Add files** afterward.
-4. Pick a tool and edit.
-5. Click **Save**. You get a new file named `yourfile-edited.pdf`, `yourfile-merged.pdf` if you merged files, or just `yourfile.pdf` if you converted a single photo or Word file without changing it. The originals aren't changed.
-
-The page loads its PDF and OCR libraries from a CDN, so you need an internet connection the first time you use each feature.
-
-You can also host it for free with GitHub Pages: go to **Settings → Pages**, choose this branch, and open the link it gives you.
+1. Click **Open** (or drag files onto the window). You can open PDFs, photos or Word `.docx` files. To merge, select several files at once, or click **Add files** afterward.
+2. Pick a tool and edit.
+3. Click **Save**. You get a new file named `yourfile-edited.pdf`, `yourfile-merged.pdf` if you merged files, or just `yourfile.pdf` if you converted a single photo or Word file without changing it. The file goes to your Downloads folder, and the originals aren't changed.
 
 ### Tools and shortcuts
 
@@ -61,7 +104,7 @@ You can also host it for free with GitHub Pages: go to **Settings → Pages**, c
 
 Click **Make searchable (OCR)**. The editor finds the pages that have no real text (usually scans or photos) and reads them with [Tesseract](https://github.com/naptha/tesseract.js). It then adds an invisible text layer on top of the image, which is the same method scanners and tools like OCRmyPDF use. The page looks exactly the same, but you can now search, select and copy its words. Click **Save** to keep the searchable version.
 
-The first run downloads the English language data, which is about 10 MB. After that, each page takes a few seconds.
+In the browser version, the first run downloads the English language data (about 3 MB). The offline app already has it. Each page takes a few seconds.
 
 ## Limitations
 
@@ -75,9 +118,26 @@ The first run downloads the English language data, which is about 10 MB. After t
 
 ## How it works
 
-Everything is in four files: `index.html`, `styles.css`, `app.js`, and `convert.js` (which handles converting photos and Word files).
+The editor is four files at the top of the repository: `index.html`, `styles.css`, `app.js`, and `convert.js` (which converts photos and Word files).
 
 - [pdf.js](https://mozilla.github.io/pdf.js/) draws the pages and adds a text layer, so your browser's own find and text selection work.
 - [pdf-lib](https://pdf-lib.js.org/) writes your edits, merges and page changes into the PDF when you save.
 - [tesseract.js](https://tesseract.projectnaptha.com/) does the OCR.
-- [heic-to](https://github.com/hoppergee/heic-to) reads iPhone HEIC photos, and [docx-preview](https://github.com/VolodymyrBaydalka/docxjs) with [html2canvas](https://html2canvas.hertzen.com/) lays out and captures Word documents. These only download when you open such a file.
+- [heic-to](https://github.com/hoppergee/heic-to) reads iPhone HEIC photos, and [docx-preview](https://github.com/VolodymyrBaydalka/docxjs) with [html2canvas](https://html2canvas.hertzen.com/) lays out and captures Word documents.
+
+The browser version loads these libraries from the jsDelivr CDN. The installable app in `app/` is built from the same four files by `tools/build-offline.mjs`. The build copies every library into `app/vendor/` and adds:
+
+- an app manifest (`offline/manifest.webmanifest`), which gives the app its name and icon and makes it installable,
+- an install button (`offline/install.js`),
+- a service worker (`offline/sw.js`), which stores every file on the device so the app works offline.
+
+### Changing the editor
+
+Edit the files at the top of the repository, then rebuild the offline app so the two versions stay the same:
+
+```
+npm install
+npm run build
+```
+
+Commit the updated `app/` folder along with your change. The build gives the app a new version number whenever any file changes, and installed copies use that to pick up the update.
