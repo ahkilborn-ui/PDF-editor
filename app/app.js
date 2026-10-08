@@ -1169,10 +1169,7 @@
       const d = drag;
       drag = null;
       if (layer.hasPointerCapture(e.pointerId)) layer.releasePointerCapture(e.pointerId);
-      if (d.kind === 'move') {
-        const a = d.a;
-        if (!d.moved && a.type === 'text' && e.detail >= 2) startEditing(a.id);
-      } else if (d.kind === 'rect') {
+      if (d.kind === 'rect') {
         d.el.remove();
         const r = normRect(d.start, d.cur);
         if (r.w > 2 && r.h > 2) {
@@ -1198,9 +1195,12 @@
       if (state.tool !== 'select' || target) e.preventDefault();
     });
 
+    // Double-click a text box to edit it. (The pointer is captured while
+    // pressing, so the event's target is the layer; look at what's under it.)
     layer.addEventListener('dblclick', (e) => {
-      const target = e.target.closest('.annot.txt');
-      if (target && state.tool === 'select') startEditing(Number(target.dataset.id));
+      if (state.tool !== 'select') return;
+      const target = document.elementsFromPoint(e.clientX, e.clientY).find((el) => el.matches('.annot.txt'));
+      if (target) startEditing(Number(target.dataset.id));
     });
   }
 
@@ -1742,6 +1742,11 @@
     if (state.editingId != null) return;
     if (document.querySelector('dialog[open]')) return; // dialogs handle their own keys
     const inField = e.target.matches('input, select, textarea, [contenteditable]');
+    // Fields you type into keep their own Ctrl+Z (undo typing); anywhere
+    // else — including check boxes, color pickers and drop-downs — Ctrl+Z
+    // undoes the last change to the document.
+    const typingField = e.target.matches('textarea, [contenteditable], ' +
+      'input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"]):not([type="button"]):not([type="submit"])');
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
     if (mod && key === 's') {
@@ -1750,15 +1755,12 @@
     } else if (mod && key === 'o') {
       e.preventDefault();
       ui.fileInput.click();
+    } else if (mod && !e.altKey && (key === 'z' || key === 'y') && !typingField) {
+      e.preventDefault();
+      if (key === 'y' || e.shiftKey) redo();
+      else undo();
     } else if (inField) {
       return;
-    } else if (mod && key === 'z') {
-      e.preventDefault();
-      if (e.shiftKey) redo();
-      else undo();
-    } else if (mod && key === 'y') {
-      e.preventDefault();
-      redo();
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId != null) {
       e.preventDefault();
       deleteSelected();
