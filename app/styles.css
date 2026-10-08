@@ -117,6 +117,13 @@ body {
 
 /* ---------- Viewer ---------- */
 
+.workspace {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
 #viewer {
   position: relative;
   flex: 1;
@@ -306,6 +313,181 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   top: 0;
   left: -100000px;
   pointer-events: none;
+}
+
+/* ---------- Page viewer panel ---------- */
+
+.page-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  width: 260px;
+  max-width: 100%;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -6px 0 18px rgba(0, 0, 0, .25);
+  transform: translateX(105%);
+  transition: transform .2s ease;
+}
+.page-panel.open { transform: none; }
+
+.panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.panel-count { color: var(--muted); }
+.icon-btn {
+  margin-left: auto;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.icon-btn:hover { background: #eef1f5; }
+.panel-range-btn { justify-content: center; }
+
+/* "Delete pages" drops down once any page is ticked. */
+.panel-selection {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-height: 0;
+  margin-top: -8px;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: max-height .2s ease, opacity .2s ease, transform .2s ease, margin-top .2s ease;
+}
+.panel-selection.show {
+  max-height: 48px;
+  margin-top: 0;
+  opacity: 1;
+  transform: none;
+}
+.panel-selection .btn { flex: 1; justify-content: center; }
+.panel-hint { margin: 0; color: var(--muted); font-size: 12px; }
+
+.btn.danger-solid { background: #d92d20; border-color: #d92d20; color: #fff; }
+.btn.danger-solid:hover:not(:disabled) { background: #b42318; }
+.link-btn {
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 12px 24px;
+  background: #eef0f3;
+}
+.panel-empty { color: var(--muted); text-align: center; margin-top: 24px; }
+
+.thumb {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 0;
+  cursor: grab;
+}
+.thumb.dragging { opacity: .4; }
+/* Where a dragged page will land. */
+.thumb.drop-before::before,
+.thumb.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--primary);
+}
+.thumb.drop-before::before { top: -2px; }
+.thumb.drop-after::after { bottom: -2px; }
+
+.thumb-frame {
+  position: relative;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
+  outline: 3px solid transparent;
+  outline-offset: 2px;
+}
+.thumb-frame canvas { display: block; }
+.thumb:hover .thumb-frame { outline-color: #b8cbf5; }
+.thumb.checked .thumb-frame { outline-color: #d92d20; }
+
+.thumb-check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: flex;
+  padding: 3px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .9);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  cursor: pointer;
+}
+.thumb-check input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: #d92d20;
+  cursor: pointer;
+}
+.thumb-num { font-size: 12px; color: var(--muted); }
+
+/* ---------- Dialogs ---------- */
+
+.dialog {
+  width: min(420px, calc(100vw - 32px));
+  padding: 20px 22px;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
+  color: var(--text);
+}
+.dialog::backdrop { background: rgba(15, 20, 30, .45); }
+.dialog h2 { margin: 0 0 12px; font-size: 18px; }
+.range-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.range-row label { display: inline-flex; gap: 8px; align-items: center; }
+.range-row input {
+  width: 72px;
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.dialog-hint { color: var(--muted); font-size: 13px; }
+.dialog-error { min-height: 1.2em; color: #b42318; font-size: 13px; }
+.dialog-error:empty { display: none; }
+.dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 /* ---------- Status bar ---------- */

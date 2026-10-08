@@ -290,6 +290,7 @@
     for (const p of allPages()) p.task?.cancel();
     observer.disconnect();
     ui.pages.textContent = '';
+    resetPanel();
     Object.assign(state, {
       sources: [], pageById: new Map(), order: [], annots: [], ocr: {},
       undo: [], redo: [], selectedId: null, editingId: null, dirty: false,
@@ -426,6 +427,7 @@
     });
     document.body.classList.toggle('multi-source', state.sources.length > 1);
     if (state.selectedId != null && !keep.has(getAnnot(state.selectedId)?.page)) select(null);
+    renderPanel();
   }
 
   function sizePage(page) {
@@ -501,13 +503,36 @@
   }
 
   function deletePage(id) {
-    if (state.order.length <= 1) return;
+    deletePages([id]);
+  }
+
+  // Delete several pages as one undoable step. At least one page must stay.
+  function deletePages(ids) {
+    const remove = new Set(ids.filter((id) => state.order.includes(id)));
+    if (!remove.size || remove.size >= state.order.length) return false;
     finishEditing();
-    const pos = state.order.indexOf(id) + 1;
+    const positions = state.order.map((id, i) => (remove.has(id) ? i + 1 : 0)).filter(Boolean);
     checkpoint();
-    state.order = state.order.filter((x) => x !== id);
+    state.order = state.order.filter((id) => !remove.has(id));
+    for (const id of remove) panel.checked.delete(id);
     layoutPages();
-    setStatus(`Deleted page ${pos}. Press Ctrl+Z (Undo) to bring it back.`);
+    const what = positions.length === 1 ? `page ${positions[0]}` : `${positions.length} pages`;
+    setStatus(`Deleted ${what}. Press Ctrl+Z (Undo) to bring ${positions.length === 1 ? 'it' : 'them'} back.`);
+    return true;
+  }
+
+  // Move a page so it sits just before another page (or at the end when beforeId is null).
+  function movePageBefore(id, beforeId) {
+    const order = state.order.filter((x) => x !== id);
+    const at = beforeId == null ? order.length : order.indexOf(beforeId);
+    if (at < 0) return;
+    order.splice(at, 0, id);
+    if (order.every((x, i) => x === state.order[i])) return;
+    finishEditing();
+    checkpoint();
+    state.order = order;
+    layoutPages();
+    setStatus(`Moved page to position ${at + 1}.`);
   }
 
   ui.pages.addEventListener('click', (e) => {
@@ -518,6 +543,306 @@
     else if (btn.dataset.act === 'down') movePage(id, 1);
     else if (btn.dataset.act === 'delete') deletePage(id);
   });
+
+  // ----------------------------------------------------------- page viewer
+  //
+  // A panel on the right listing every page. Tick pages to delete them (a
+  // "Delete pages" button drops down), drag pages to reorder them, or delete
+  // a numbered range. Deletions are confirmed first and can be undone.
+
+  const THUMB_WIDTH = 150;
+
+  const panel = {
+    el: $('#page-panel'),
+    list: $('#panel-list'),
+    count: $('#panel-count'),
+    toggleBtn: $('#pages-btn'),
+    selection: $('#panel-selection'),
+    deleteBtn: $('#panel-delete-btn'),
+    clearBtn: $('#panel-clear-btn'),
+    rangeBtn: $('#panel-range-btn'),
+    open: false,
+    checked: new Set(),   // page ids ticked for deletion
+    items: new Map(),     // page id -> { item, frame, canvas, checkbox, num, rendered }
+    dragId: null,
+    dropBefore: undefined,
+  };
+
+  const thumbObserver = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) renderThumb(entry.target.dataset.pageId);
+    }
+  }, { root: panel.list, rootMargin: '400px 0px' });
+
+  function togglePanel(open = !panel.open) {
+    panel.open = open;
+    panel.el.classList.toggle('open', open);
+    panel.el.inert = !open;
+    panel.toggleBtn.classList.toggle('active', open);
+    panel.toggleBtn.setAttribute('aria-expanded', String(open));
+    if (open) renderPanel();
+  }
+
+  function resetPanel() {
+    thumbObserver.disconnect();
+    panel.items.clear();
+    panel.checked.clear();
+    panel.list.textContent = '';
+    renderPanel();
+  }
+
+  function panelItem(page) {
+    let entry = panel.items.get(page.id);
+    if (entry) return entry;
+    const item = document.createElement('div');
+    item.className = 'thumb';
+    item.draggable = true;
+    item.dataset.pageId = page.id;
+    const frame = document.createElement('div');
+    frame.className = 'thumb-frame';
+    const scale = THUMB_WIDTH / page.vp.width;
+    const canvas = document.createElement('canvas');
+    canvas.style.width = `${THUMB_WIDTH}px`;
+    canvas.style.height = `${Math.round(page.vp.height * scale)}px`;
+    const check = document.createElement('label');
+    check.className = 'thumb-check';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    check.append(checkbox);
+    frame.append(canvas, check);
+    const num = document.createElement('div');
+    num.className = 'thumb-num';
+    item.append(frame, num);
+    entry = { item, frame, canvas, checkbox, num, rendered: false };
+    panel.items.set(page.id, entry);
+
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) panel.checked.add(page.id);
+      else panel.checked.delete(page.id);
+      item.classList.toggle('checked', checkbox.checked);
+      updatePanelSelection();
+    });
+    // Clicking a page (not its check box) shows it in the main view.
+    frame.addEventListener('click', (e) => {
+      if (e.target.closest('.thumb-check')) return;
+      page.wrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+    item.addEventListener('dragstart', (e) => {
+      panel.dragId = page.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', page.id);
+      requestAnimationFrame(() => item.classList.add('dragging'));
+    });
+    item.addEventListener('dragend', () => {
+      item.classList.remove('dragging');
+      clearDropMarker();
+      panel.dragId = null;
+    });
+    thumbObserver.observe(item);
+    return entry;
+  }
+
+  async function renderThumb(id) {
+    const entry = panel.items.get(id);
+    const page = state.pageById.get(id);
+    if (!entry || !page || entry.rendered) return;
+    entry.rendered = true;
+    const dpr = window.devicePixelRatio || 1;
+    const viewport = page.pdfPage.getViewport({ scale: (THUMB_WIDTH / page.vp.width) * dpr });
+    entry.canvas.width = Math.floor(viewport.width);
+    entry.canvas.height = Math.floor(viewport.height);
+    try {
+      await page.pdfPage.render({ canvasContext: entry.canvas.getContext('2d'), viewport }).promise;
+    } catch (err) {
+      console.error('Thumbnail failed for page', id, err);
+      entry.rendered = false;
+    }
+  }
+
+  // Show the pages in document order with their current numbers.
+  function renderPanel() {
+    const list = pages();
+    for (const id of panel.checked) if (!state.order.includes(id)) panel.checked.delete(id);
+    panel.count.textContent = list.length ? `(${list.length})` : '';
+    panel.rangeBtn.disabled = list.length < 2;
+    if (!panel.open) {
+      updatePanelSelection();
+      return;
+    }
+    if (!list.length) {
+      panel.list.innerHTML = '<p class="panel-empty">Open a file to see its pages here.</p>';
+    } else {
+      panel.list.querySelector('.panel-empty')?.remove();
+      const keep = new Set(state.order);
+      for (const el of [...panel.list.children]) if (!keep.has(el.dataset.pageId)) el.remove();
+      list.forEach((page, i) => {
+        const entry = panelItem(page);
+        if (panel.list.children[i] !== entry.item) panel.list.insertBefore(entry.item, panel.list.children[i] || null);
+        entry.num.textContent = `Page ${i + 1}`;
+        const checked = panel.checked.has(page.id);
+        entry.checkbox.checked = checked;
+        entry.checkbox.setAttribute('aria-label', `Select page ${i + 1}`);
+        entry.item.classList.toggle('checked', checked);
+      });
+    }
+    updatePanelSelection();
+  }
+
+  function updatePanelSelection() {
+    const n = panel.checked.size;
+    panel.selection.classList.toggle('show', n > 0);
+    panel.deleteBtn.textContent = n === 1 ? 'Delete 1 page' : `Delete ${n} pages`;
+    panel.deleteBtn.tabIndex = n > 0 ? 0 : -1;
+    panel.clearBtn.tabIndex = n > 0 ? 0 : -1;
+  }
+
+  // Page numbers (1-based, current order) as short text, e.g. "2, 5 and 7".
+  function describePages(ids) {
+    const nums = ids.map((id) => state.order.indexOf(id) + 1).sort((a, b) => a - b);
+    if (nums.length === 1) return `page ${nums[0]}`;
+    if (nums.length <= 6) return `pages ${nums.slice(0, -1).join(', ')} and ${nums[nums.length - 1]}`;
+    return `${nums.length} pages`;
+  }
+
+  // --- reordering by drag and drop
+
+  function clearDropMarker() {
+    panel.list.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+    panel.dropBefore = undefined;
+  }
+
+  panel.list.addEventListener('dragover', (e) => {
+    if (!panel.dragId) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const items = [...panel.list.querySelectorAll('.thumb')];
+    if (!items.length) return;
+    // Land before the first page whose middle is below the pointer.
+    let target = items.find((el) => {
+      const r = el.getBoundingClientRect();
+      return e.clientY < r.top + r.height / 2;
+    });
+    clearDropMarker();
+    if (target) {
+      target.classList.add('drop-before');
+      panel.dropBefore = target.dataset.pageId;
+    } else {
+      target = items[items.length - 1];
+      target.classList.add('drop-after');
+      panel.dropBefore = null;
+    }
+  });
+  panel.list.addEventListener('dragleave', (e) => {
+    if (!panel.list.contains(e.relatedTarget)) clearDropMarker();
+  });
+  panel.list.addEventListener('drop', (e) => {
+    if (!panel.dragId) return;
+    e.preventDefault();
+    const before = panel.dropBefore;
+    const id = panel.dragId;
+    clearDropMarker();
+    if (before !== undefined && before !== id) movePageBefore(id, before);
+  });
+
+  // --- confirmation and range dialogs
+
+  const confirmUi = {
+    dialog: $('#confirm-dialog'),
+    message: $('#confirm-message'),
+    yes: $('#confirm-yes'),
+    no: $('#confirm-no'),
+  };
+
+  // Ask a yes/no question. Resolves true for Yes, false for No or Esc.
+  function askConfirm(message) {
+    return new Promise((resolve) => {
+      confirmUi.message.textContent = message;
+      const finish = (answer) => {
+        confirmUi.yes.onclick = confirmUi.no.onclick = confirmUi.dialog.oncancel = null;
+        confirmUi.dialog.close();
+        resolve(answer);
+      };
+      confirmUi.yes.onclick = () => finish(true);
+      confirmUi.no.onclick = () => finish(false);
+      confirmUi.dialog.oncancel = (e) => {
+        e.preventDefault();
+        finish(false);
+      };
+      confirmUi.dialog.showModal();
+      confirmUi.no.focus();
+    });
+  }
+
+  async function deleteChecked() {
+    const ids = state.order.filter((id) => panel.checked.has(id));
+    if (!ids.length) return;
+    if (ids.length >= state.order.length) {
+      alert('You can\'t delete every page. Untick at least one page to keep.');
+      return;
+    }
+    const sure = await askConfirm(`Delete ${describePages(ids)}? You can bring ${ids.length === 1 ? 'it' : 'them'} back with Undo.`);
+    if (sure) deletePages(ids);
+  }
+
+  const rangeUi = {
+    dialog: $('#range-dialog'),
+    form: $('#range-form'),
+    from: $('#range-from'),
+    to: $('#range-to'),
+    total: $('#range-total'),
+    error: $('#range-error'),
+    cancel: $('#range-cancel'),
+  };
+
+  function openRangeDialog(keepValues = false) {
+    const n = state.order.length;
+    if (n < 2) return;
+    rangeUi.from.max = rangeUi.to.max = n;
+    if (!keepValues) {
+      rangeUi.from.value = '';
+      rangeUi.to.value = '';
+    }
+    rangeUi.total.textContent = `This document has ${n} pages.`;
+    rangeUi.error.textContent = '';
+    rangeUi.dialog.showModal();
+    rangeUi.from.focus();
+    rangeUi.from.select();
+  }
+
+  rangeUi.cancel.addEventListener('click', () => rangeUi.dialog.close());
+  for (const input of [rangeUi.from, rangeUi.to]) {
+    input.addEventListener('input', () => { rangeUi.error.textContent = ''; });
+  }
+  rangeUi.form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const n = state.order.length;
+    const from = Number(rangeUi.from.value);
+    const to = Number(rangeUi.to.value);
+    let problem = '';
+    if (!rangeUi.from.value || !rangeUi.to.value) problem = 'Enter both page numbers.';
+    else if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to < 1 || from > n || to > n) problem = `Page numbers must be between 1 and ${n}.`;
+    else if (from > to) problem = 'The first page number can\'t be bigger than the second.';
+    else if (to - from + 1 >= n) problem = 'That\'s every page. At least one page has to stay.';
+    if (problem) {
+      rangeUi.error.textContent = problem;
+      return;
+    }
+    rangeUi.dialog.close();
+    const count = to - from + 1;
+    const what = from === to ? `page ${from}` : `pages ${from} to ${to} (${count} pages)`;
+    const sure = await askConfirm(`Delete ${what}? You can bring ${count === 1 ? 'it' : 'them'} back with Undo.`);
+    if (sure) deletePages(state.order.slice(from - 1, to));
+    else openRangeDialog(true); // "No" goes back to the range so it can be changed
+  });
+
+  panel.toggleBtn.addEventListener('click', () => togglePanel());
+  $('#panel-close').addEventListener('click', () => togglePanel(false));
+  panel.deleteBtn.addEventListener('click', deleteChecked);
+  panel.clearBtn.addEventListener('click', () => {
+    panel.checked.clear();
+    renderPanel();
+  });
+  panel.rangeBtn.addEventListener('click', () => openRangeDialog());
 
   // ----------------------------------------------------------------- zoom
 
@@ -1400,6 +1725,7 @@
 
   // Dropping files: opens them, or adds them to the end if a document is open.
   ui.viewer.addEventListener('dragover', (e) => {
+    if (panel.dragId) return; // a page being reordered in the page viewer
     e.preventDefault();
     ui.viewer.classList.add('dragover');
   });
@@ -1414,6 +1740,7 @@
 
   document.addEventListener('keydown', (e) => {
     if (state.editingId != null) return;
+    if (document.querySelector('dialog[open]')) return; // dialogs handle their own keys
     const inField = e.target.matches('input, select, textarea, [contenteditable]');
     const mod = e.ctrlKey || e.metaKey;
     const key = e.key.toLowerCase();
@@ -1435,6 +1762,8 @@
     } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId != null) {
       e.preventDefault();
       deleteSelected();
+    } else if (e.key === 'Escape' && panel.open) {
+      togglePanel(false);
     } else if (e.key === 'Escape') {
       select(null);
       setTool('select');
@@ -1467,7 +1796,7 @@
   }
 
   // Exposed for automated tests / debugging in the console.
-  window.pdfEditor = { state, openFiles, save, runOcr, setTool, setZoom, movePage, deletePage };
+  window.pdfEditor = { state, panel, openFiles, save, runOcr, setTool, setZoom, movePage, deletePage, deletePages, togglePanel };
 
   showColor(state.colors[state.tool]);
   updateButtons();

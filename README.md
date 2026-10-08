@@ -12,7 +12,7 @@ It can:
 - **Any color** for text, highlights, rectangles and drawing. Pick one of the 16 quick colors, or use **Custom** to choose any color from the full spectrum (or type a hex/RGB value).
 - **Convert photos and Word files to PDF**: open iPhone photos (HEIC), JPG, PNG and other images, or Word `.docx` files, and they become PDF pages you can edit, merge and save.
 - **Merge**: open several files at once, or use **Add files** to add more to the end. You can mix PDFs, photos and Word files.
-- **Delete, or move pages** up and down, using the buttons above each page.
+- **Page viewer**: a panel showing every page, where you can tick pages to delete, delete a range (for example pages 3 to 7), or drag pages into a new order.
 - **Make searchable (OCR)**: reads the words on scanned pages so <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>⌘</kbd>+<kbd>F</kbd> on Mac) can find them, both in the editor and in the saved file in any PDF reader.
 
 ## Two versions
@@ -90,7 +90,13 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 ### Merging, deleting and reordering pages
 
 - **Merge**: choose several files in **Open**, or click **Add files** to add more PDFs, photos or Word files to the end. You can also drop files onto the window; if a document is already open, they're added to the end.
-- Above each page are **↑ Up**, **↓ Down** and **Delete page** buttons.
+- **Page viewer**: click **Page viewer** in the toolbar to open a panel on the right with every page in order. In the panel:
+  - **Delete pages**: tick the check box in the top-left corner of each page you want to remove. A **Delete pages** button drops down at the top of the panel. Click it, then **Yes** to confirm, or **No** to keep them. **Clear** unticks everything.
+  - **Delete range of pages…**: type the first and last page numbers, for example 3 to 7, then click **Delete pages**. Click **Yes** to delete them, or **No** to go back and change the numbers.
+  - **Reorder**: drag a page up or down the list and drop it where you want it.
+  - Click a page to jump to it in the main view. Press <kbd>Esc</kbd> or **×** to close the panel.
+- Above each page in the main view there are also **↑ Up**, **↓ Down** and **Delete page** buttons.
+- At least one page always has to stay.
 - **Undo** reverses page deletions, moves and added files too.
 
 ### Converting photos and Word files

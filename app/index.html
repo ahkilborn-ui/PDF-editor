@@ -28,6 +28,7 @@
         <input id="add-input" type="file" accept="application/pdf,.pdf,image/*,.heic,.heif,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
       </label>
       <button id="save-btn" class="btn primary" title="Download the edited PDF (Ctrl+S)" disabled>Save</button>
+      <button id="pages-btn" class="btn" title="Show every page to delete or reorder them" aria-expanded="false" aria-controls="page-panel">Page viewer</button>
     </div>
 
     <div class="group" role="toolbar" aria-label="Tools">
@@ -87,6 +88,7 @@
     </div>
   </header>
 
+  <div class="workspace">
   <main id="viewer">
     <div id="drop-hint" class="drop-hint">
       <h1>PDF Editor</h1>
@@ -104,6 +106,49 @@
     </div>
     <div id="pages"></div>
   </main>
+
+  <aside id="page-panel" class="page-panel" aria-label="Page viewer" inert>
+    <div class="panel-head">
+      <div class="panel-title">
+        <strong>Pages</strong>
+        <span id="panel-count" class="panel-count"></span>
+        <button id="panel-close" class="icon-btn" title="Close page viewer (Esc)" aria-label="Close page viewer">×</button>
+      </div>
+      <button id="panel-range-btn" class="btn danger panel-range-btn" title="Delete pages from one number to another">Delete range of pages…</button>
+      <div id="panel-selection" class="panel-selection" aria-live="polite">
+        <button id="panel-delete-btn" class="btn danger-solid" tabindex="-1">Delete pages</button>
+        <button id="panel-clear-btn" class="link-btn" tabindex="-1">Clear</button>
+      </div>
+      <p class="panel-hint">Tick pages to delete them. Drag a page to move it.</p>
+    </div>
+    <div id="panel-list" class="panel-list"></div>
+  </aside>
+  </div>
+
+  <dialog id="range-dialog" class="dialog" aria-labelledby="range-title">
+    <form id="range-form" novalidate>
+      <h2 id="range-title">Delete a range of pages</h2>
+      <p class="range-row">
+        <label>Delete pages <input id="range-from" type="number" min="1" inputmode="numeric"></label>
+        <label>to <input id="range-to" type="number" min="1" inputmode="numeric"></label>
+      </p>
+      <p id="range-total" class="dialog-hint"></p>
+      <p id="range-error" class="dialog-error" role="alert"></p>
+      <div class="dialog-buttons">
+        <button type="button" id="range-cancel" class="btn">Cancel</button>
+        <button type="submit" class="btn danger-solid">Delete pages</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title">
+    <h2 id="confirm-title">Are you sure?</h2>
+    <p id="confirm-message"></p>
+    <div class="dialog-buttons">
+      <button type="button" id="confirm-no" class="btn">No</button>
+      <button type="button" id="confirm-yes" class="btn danger-solid">Yes</button>
+    </div>
+  </dialog>
 
   <footer class="statusbar">
     <span id="status">No document open.</span>
