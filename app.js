@@ -265,6 +265,7 @@
     const before = append ? snapshot() : null;
     let added = 0;
     state.busy = true;
+    state.busyLabel = 'opening files';
     updateButtons();
     try {
       for (const file of files) {
@@ -905,11 +906,13 @@
 
   // Ask a yes/no question. Resolves true for Yes, false for No or Esc.
   // Ask a question with two buttons; by default "Are you sure?" with Yes / No.
-  function askConfirm(message, { title = 'Are you sure?', yes = 'Yes', no = 'No', danger = true } = {}) {
+  function askConfirm(message, { title = 'Are you sure?', yes = 'Yes', no = 'No', danger = true, warning = false } = {}) {
     return new Promise((resolve) => {
+      confirmUi.dialog.classList.toggle('warning', warning);
       confirmUi.title.textContent = title;
       confirmUi.message.textContent = message;
-      confirmUi.yes.textContent = yes;
+      confirmUi.yes.hidden = !yes; // a warning may have only "OK"
+      confirmUi.yes.textContent = yes || '';
       confirmUi.no.textContent = no;
       confirmUi.yes.classList.toggle('danger-solid', danger);
       confirmUi.yes.classList.toggle('primary', !danger);
@@ -1606,6 +1609,7 @@
     }
 
     state.busy = true;
+    state.busyLabel = 'reading the text on scanned pages (Make searchable)';
     updateButtons();
     let worker;
     const before = snapshot();
@@ -1876,8 +1880,17 @@
   // Save the document. In Chrome and Edge the first save asks where to put
   // the file, and later saves (Ctrl+S) update that same file; Save As
   // (Ctrl+Shift+S) asks again. Other browsers download a copy each time.
+  //
+  // Whenever a save doesn't happen, a "Not saved" popup says so and why.
   async function save({ saveAs = false } = {}) {
-    if (!state.order.length || state.busy) return;
+    if (!state.order.length) {
+      await notSaved('There is nothing to save yet. Open a file first.');
+      return;
+    }
+    if (state.busy) {
+      await notSaved(`PDF Editor is still busy ${state.busyLabel || 'working'}. Wait until it finishes, then save again.`);
+      return;
+    }
     finishEditing();
 
     // Ask for the location first, while the click / key press still counts
@@ -1891,7 +1904,10 @@
         });
       } catch (err) {
         if (err.name === 'AbortError') {
-          setStatus('Save cancelled.');
+          setStatus('Not saved.');
+          const retry = await notSaved('The save window was closed without choosing where to save, so your changes have not been saved.',
+            { retry: 'Choose where to save' });
+          if (retry) save({ saveAs });
           return;
         }
         console.warn('Save dialog unavailable, downloading instead:', err);
@@ -1900,10 +1916,17 @@
     }
 
     state.busy = true;
+    state.busyLabel = 'saving';
     updateButtons();
     setStatus('Saving…');
+    let bytes = null;
+    let name = outputName();
+    let failure = null;
     try {
-      let bytes = await buildPdf();
+      if (typeof PDFLib === 'undefined') {
+        throw new Error('the PDF tools could not be loaded. Check your internet connection and reload the page (your changes will be lost on reload).');
+      }
+      bytes = await buildPdf();
 
       // If a file needed a password to open, offer to keep that password on
       // the saved copy (asked once per document). Edit/print restrictions
@@ -1926,31 +1949,68 @@
         }
       }
 
-      let name = outputName();
       if (handle) {
-        try {
-          const writable = await handle.createWritable();
-          await writable.write(bytes);
-          await writable.close();
-        } catch (err) {
-          throw new Error(`couldn't write to ${handle.name}. If it's open in another program, close it there and try again, or use Save As (Ctrl+Shift+S). (${err.message})`);
-        }
+        await writeToFile(handle, bytes);
         state.saveHandle = handle;
         name = handle.name;
         note += ' Ctrl+S saves to this file again.';
       } else {
         download(bytes, name);
+        note += ' It is in your Downloads folder.';
       }
       state.dirty = false;
       setStatus(`Saved ${name}.${note}`);
     } catch (err) {
       console.error(err);
-      setStatus(`Save failed: ${err.message || err}`);
-      alert(`Save failed: ${err.message || err}`);
+      failure = err;
+      setStatus(`Not saved: ${err.message || err}`);
     } finally {
       state.busy = false;
       updateButtons();
     }
+
+    if (failure) {
+      // Writing to the chosen file failed but the PDF itself is ready:
+      // offer to download it instead, so the work isn't lost.
+      const canDownload = failure.writeFailed && bytes;
+      const choice = await notSaved(`Your changes have not been saved. ${capitalize(failure.message || String(failure))}`,
+        { retry: canDownload ? 'Download a copy instead' : 'Try again' });
+      if (choice && canDownload) {
+        download(bytes, name);
+        state.dirty = false;
+        updateButtons();
+        setStatus(`Saved a copy of ${name} to your Downloads folder.`);
+      } else if (choice) {
+        save({ saveAs });
+      }
+    }
+  }
+
+  // Write the PDF to a file chosen in the save window, then check the file
+  // on disk really has all of it.
+  async function writeToFile(handle, bytes) {
+    try {
+      const writable = await handle.createWritable();
+      await writable.write(bytes);
+      await writable.close();
+      const written = await handle.getFile();
+      if (written.size !== bytes.length) {
+        throw new Error(`only ${written.size} of ${bytes.length} bytes were written`);
+      }
+    } catch (err) {
+      const e = new Error(`It couldn't be written to "${handle.name}". If that file is open in another program (like Acrobat), close it there and try again, or use Save As (Ctrl+Shift+S) to pick another file. (Details: ${err.message})`);
+      e.writeFailed = true;
+      throw e;
+    }
+  }
+
+  function capitalize(text) {
+    return text ? text[0].toUpperCase() + text.slice(1) : text;
+  }
+
+  // The "Not saved" warning. Resolves true if the person picks the retry button.
+  function notSaved(message, { retry = null } = {}) {
+    return askConfirm(message, { title: '⚠ Not saved', yes: retry, no: 'OK', danger: false, warning: true });
   }
 
   // Print the edited PDF itself (not the editor screen) using the browser's
@@ -1959,6 +2019,7 @@
     if (!state.order.length || state.busy) return;
     finishEditing();
     state.busy = true;
+    state.busyLabel = 'preparing to print';
     updateButtons();
     setStatus('Preparing to print…');
     try {
@@ -2054,8 +2115,9 @@
     // text box, and never fall through to the browser's own versions.
     if (mod && !e.altKey && (key === 's' || key === 'o' || key === 'p')) {
       e.preventDefault();
-      if (document.querySelector('dialog[open]') || state.busy) return;
-      if (key === 's') save({ saveAs: e.shiftKey });
+      if (document.querySelector('dialog[open]')) return;
+      if (key === 's') save({ saveAs: e.shiftKey }); // explains itself if it can't save now
+      else if (state.busy) return;
       else if (key === 'o') ui.fileInput.click();
       else printPdf();
       return;

@@ -110,6 +110,14 @@ On a Mac, use <kbd>⌘</kbd> wherever this says <kbd>Ctrl</kbd>.
 
 The tab title shows a **•** when there are unsaved changes.
 
+If a save doesn't happen for any reason, a red **Not saved** popup says why, with a button to fix it where there is one. For example:
+- **The file is open in another program:** choose **Download a copy instead**, or close the file there and save again.
+- **You closed the save window:** choose **Choose where to save**.
+- **The app is still busy,** for example reading a scan: wait for it to finish, then save.
+- **Something else went wrong:** choose **Try again**.
+
+The app also checks that the whole file was written to disk. Closing the tab with unsaved changes asks you to confirm first.
+
 ### Merging, deleting and reordering pages
 
 - **Merge**: choose several files in **Open**, or click **Add files** to add more PDFs, photos or Word files to the end. You can also drop files onto the window; if a document is already open, they're added to the end.
