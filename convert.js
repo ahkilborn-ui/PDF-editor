@@ -104,14 +104,13 @@
 
   // Writes words with text render mode 3 (invisible): not drawn, but PDF
   // readers can search, select and copy them — the same technique used by
-  // scanners and tools like OCRmyPDF. Each word is {text, x, w, baseline, size};
-  // toPdf maps (x, baseline) to PDF coordinates, and w/size are in points.
+  // scanners and tools like OCRmyPDF. Each word is {text, x, w, baseline, size,
+  // rot?}; toPdf maps (x, baseline) to PDF coordinates, and w/size are in
+  // points. `rotation` is the page's display rotation; a word's own `rot` is
+  // how far it's turned clockwise on screen (after the page was rotated).
   function writeInvisibleText(target, font, clean, words, toPdf, rotation = 0) {
     const L = PDFLib;
     const fontKey = target.node.newFontDictionary(font.name, font.ref);
-    const rad = (rotation * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
     const ops = [L.pushGraphicsState(), L.beginText(), L.setTextRenderingMode(L.TextRenderingMode.Invisible)];
     for (const w of words) {
       const text = clean(w.text);
@@ -119,6 +118,9 @@
       const natural = font.widthOfTextAtSize(text, w.size);
       const squeeze = natural > 0 ? Math.max(1, Math.min(1000, (100 * w.w) / natural)) : 100;
       const [x, y] = toPdf(w.x, w.baseline);
+      const rad = ((rotation - (w.rot || 0)) * Math.PI) / 180;
+      const cos = Math.cos(rad);
+      const sin = Math.sin(rad);
       ops.push(
         L.setFontAndSize(fontKey, w.size),
         L.setCharacterSqueeze(squeeze),

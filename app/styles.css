@@ -290,6 +290,7 @@ body[data-tool="draw"] .annot { pointer-events: none; }
 
 .annot.hl { mix-blend-mode: multiply; opacity: .4; }
 .annot.txt {
+  transform-origin: 0 0;
   margin: 0;
   padding: calc(var(--scale-factor) * 2px);
   font-family: Helvetica, Arial, sans-serif;
@@ -457,6 +458,29 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   cursor: pointer;
 }
 .thumb-num { font-size: 12px; color: var(--muted); }
+
+.thumb-rotate {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  gap: 3px;
+}
+.thumb-rotate button {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, .15);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.thumb-rotate button:hover { background: #dbe7ff; }
+.panel-selection .rotate-btn { flex: none; width: 36px; padding: 0; font-size: 18px; }
 
 /* ---------- Dialogs ---------- */
 

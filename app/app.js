@@ -79,6 +79,7 @@
     loadToken: 0,
     textReady: Promise.resolve(),
     colorLive: false,
+    rotation: {},          // page id -> extra clockwise rotation (0/90/180/270) added in the editor
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -180,7 +181,7 @@
   // ----------------------------------------------------------- undo / redo
 
   function snapshot() {
-    return JSON.stringify({ annots: state.annots, ocr: state.ocr, order: state.order });
+    return JSON.stringify({ annots: state.annots, ocr: state.ocr, order: state.order, rotation: state.rotation });
   }
 
   function checkpoint() {
@@ -196,8 +197,12 @@
     state.annots = data.annots;
     state.ocr = data.ocr;
     state.order = data.order;
+    state.rotation = data.rotation || {};
     state.selectedId = null;
     state.editingId = null;
+    for (const p of allPages()) {
+      if (p.vp.rotation !== viewRotation(p)) applyRotation(p);
+    }
     layoutPages();
     allPages().forEach((p) => {
       drawAnnots(p);
@@ -292,7 +297,7 @@
     ui.pages.textContent = '';
     resetPanel();
     Object.assign(state, {
-      sources: [], pageById: new Map(), order: [], annots: [], ocr: {},
+      sources: [], pageById: new Map(), order: [], annots: [], ocr: {}, rotation: {},
       undo: [], redo: [], selectedId: null, editingId: null, dirty: false,
       textReady: Promise.resolve(),
     });
@@ -448,7 +453,7 @@
     page.renderedZoom = zoom;
     if (page.task) page.task.cancel();
     const dpr = window.devicePixelRatio || 1;
-    const viewport = page.pdfPage.getViewport({ scale: zoom * dpr });
+    const viewport = viewportOf(page, zoom * dpr);
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
@@ -475,7 +480,10 @@
         viewport: page.vp,
       });
       await layer.render();
-      page.textLayer.addEventListener('mousedown', () => page.textLayer.classList.add('selecting'));
+      if (!page.textLayer.dataset.listening) {
+        page.textLayer.dataset.listening = '1';
+        page.textLayer.addEventListener('mousedown', () => page.textLayer.classList.add('selecting'));
+      }
     } catch (err) {
       console.error('Text layer failed for page', page.id, err);
       page.charCount = page.charCount || 0;
@@ -544,6 +552,97 @@
     else if (btn.dataset.act === 'delete') deletePage(id);
   });
 
+  // --------------------------------------------------------- page rotation
+  //
+  // Pages can be turned in 90° steps. The extra turn is kept per page in
+  // state.rotation (so it's undoable) and saved as the page's /Rotate value.
+  // Things added to the page are turned with it.
+
+  // The rotation a page is shown at: its own rotation plus any turn added here.
+  function viewRotation(page) {
+    return (page.pdfPage.rotate + (state.rotation[page.id] || 0)) % 360;
+  }
+
+  function viewportOf(page, scale) {
+    return page.pdfPage.getViewport({ scale, rotation: viewRotation(page) });
+  }
+
+  // Re-lay out a page after its rotation changed (or was undone).
+  function applyRotation(page) {
+    page.vp = viewportOf(page, 1);
+    sizePage(page);
+    page.renderedZoom = 0;
+    // Redraw now if it's on screen; otherwise the scroll observer will when it comes into view.
+    if (nearView(page)) renderCanvas(page);
+    page.textLayer.textContent = '';
+    page.textLayer.removeAttribute('style');
+    renderTextLayer(page);
+    drawAnnots(page);
+    drawOcrLayer(page);
+    const thumb = panel.items.get(page.id);
+    if (thumb) {
+      thumb.rendered = false;
+      thumb.stale = true; // redrawn the next time the page viewer shows it
+      if (panel.open) renderThumb(page.id);
+    }
+  }
+
+  function nearView(page) {
+    const r = page.el.getBoundingClientRect();
+    const vr = ui.viewer.getBoundingClientRect();
+    return r.bottom > vr.top - 600 && r.top < vr.bottom + 600 && r.width > 0;
+  }
+
+  // Where a point on a W×H page ends up after turning it clockwise `quarters` times.
+  function turnPoint(x, y, W, H, quarters) {
+    for (let i = 0; i < quarters; i++) {
+      [x, y] = [H - y, x];
+      [W, H] = [H, W];
+    }
+    return [round(x), round(y)];
+  }
+
+  // Turn everything added to a page along with the page.
+  function turnPageContent(page, quarters) {
+    const W = page.vp.width;
+    const H = page.vp.height;
+    const deg = quarters * 90;
+    for (const a of state.annots) {
+      if (a.page !== page.id) continue;
+      if (a.type === 'ink') {
+        a.points = a.points.map(([x, y]) => turnPoint(x, y, W, H, quarters));
+      } else if (a.type === 'text') {
+        [a.x, a.y] = turnPoint(a.x, a.y, W, H, quarters);
+        a.rot = ((a.rot || 0) + deg) % 360;
+      } else {
+        const [x1, y1] = turnPoint(a.x, a.y, W, H, quarters);
+        const [x2, y2] = turnPoint(a.x + a.w, a.y + a.h, W, H, quarters);
+        Object.assign(a, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) });
+      }
+    }
+    for (const w of state.ocr[page.id] || []) {
+      [w.x, w.baseline] = turnPoint(w.x, w.baseline, W, H, quarters);
+      w.rot = ((w.rot || 0) + deg) % 360;
+    }
+  }
+
+  // Rotate pages by +90 (clockwise) or -90 (counterclockwise), as one undo step.
+  function rotatePages(ids, degrees) {
+    const list = ids.map((id) => state.pageById.get(id)).filter((p) => p && state.order.includes(p.id));
+    if (!list.length) return;
+    finishEditing();
+    checkpoint();
+    const quarters = (((degrees / 90) % 4) + 4) % 4;
+    for (const page of list) {
+      turnPageContent(page, quarters);
+      state.rotation[page.id] = ((state.rotation[page.id] || 0) + quarters * 90) % 360;
+      applyRotation(page);
+    }
+    if (state.selectedId != null) select(null);
+    const which = list.length === 1 ? `page ${state.order.indexOf(list[0].id) + 1}` : `${list.length} pages`;
+    setStatus(`Rotated ${which} ${degrees > 0 ? 'clockwise' : 'counterclockwise'}.`);
+  }
+
   // ----------------------------------------------------------- page viewer
   //
   // A panel on the right listing every page. Tick pages to delete them (a
@@ -609,7 +708,16 @@
     const checkbox = document.createElement('input');
     checkbox.type = 'checkbox';
     check.append(checkbox);
-    frame.append(canvas, check);
+    const turns = document.createElement('div');
+    turns.className = 'thumb-rotate';
+    turns.innerHTML =
+      '<button type="button" data-turn="-90" title="Rotate left (counterclockwise)" aria-label="Rotate page left">↺</button>' +
+      '<button type="button" data-turn="90" title="Rotate right (clockwise)" aria-label="Rotate page right">↻</button>';
+    turns.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-turn]');
+      if (btn) rotatePages([page.id], Number(btn.dataset.turn));
+    });
+    frame.append(canvas, check, turns);
     const num = document.createElement('div');
     num.className = 'thumb-num';
     item.append(frame, num);
@@ -624,7 +732,7 @@
     });
     // Clicking a page (not its check box) shows it in the main view.
     frame.addEventListener('click', (e) => {
-      if (e.target.closest('.thumb-check')) return;
+      if (e.target.closest('.thumb-check, .thumb-rotate')) return;
       page.wrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
     });
     item.addEventListener('dragstart', (e) => {
@@ -647,8 +755,10 @@
     const page = state.pageById.get(id);
     if (!entry || !page || entry.rendered) return;
     entry.rendered = true;
+    entry.stale = false;
     const dpr = window.devicePixelRatio || 1;
-    const viewport = page.pdfPage.getViewport({ scale: (THUMB_WIDTH / page.vp.width) * dpr });
+    const viewport = viewportOf(page, (THUMB_WIDTH / page.vp.width) * dpr);
+    entry.canvas.style.height = `${Math.round(page.vp.height * (THUMB_WIDTH / page.vp.width))}px`;
     entry.canvas.width = Math.floor(viewport.width);
     entry.canvas.height = Math.floor(viewport.height);
     try {
@@ -683,6 +793,7 @@
         entry.checkbox.checked = checked;
         entry.checkbox.setAttribute('aria-label', `Select page ${i + 1}`);
         entry.item.classList.toggle('checked', checked);
+        if (entry.stale) renderThumb(page.id);
       });
     }
     updatePanelSelection();
@@ -692,8 +803,7 @@
     const n = panel.checked.size;
     panel.selection.classList.toggle('show', n > 0);
     panel.deleteBtn.textContent = n === 1 ? 'Delete 1 page' : `Delete ${n} pages`;
-    panel.deleteBtn.tabIndex = n > 0 ? 0 : -1;
-    panel.clearBtn.tabIndex = n > 0 ? 0 : -1;
+    for (const btn of panel.selection.querySelectorAll('button')) btn.tabIndex = n > 0 ? 0 : -1;
   }
 
   // Page numbers (1-based, current order) as short text, e.g. "2, 5 and 7".
@@ -838,6 +948,9 @@
   panel.toggleBtn.addEventListener('click', () => togglePanel());
   $('#panel-close').addEventListener('click', () => togglePanel(false));
   panel.deleteBtn.addEventListener('click', deleteChecked);
+  for (const btn of panel.selection.querySelectorAll('[data-turn]')) {
+    btn.addEventListener('click', () => rotatePages(state.order.filter((id) => panel.checked.has(id)), Number(btn.dataset.turn)));
+  }
   panel.clearBtn.addEventListener('click', () => {
     panel.checked.clear();
     renderPanel();
@@ -861,10 +974,8 @@
       drawOcrLayer(page);
     }
     v.scrollTop = relY * v.scrollHeight - v.clientHeight / 2;
-    const vr = v.getBoundingClientRect();
     for (const page of pages()) {
-      const r = page.el.getBoundingClientRect();
-      if (r.bottom > vr.top - 600 && r.top < vr.bottom + 600) renderCanvas(page);
+      if (nearView(page)) renderCanvas(page);
     }
     updateButtons();
   }
@@ -928,6 +1039,8 @@
         el.textContent = a.text;
         el.style.fontSize = `${a.size * z}px`;
         el.style.color = a.color;
+        // Text on a page that was rotated after typing turns with the page.
+        if (a.rot) el.style.transform = `rotate(${a.rot}deg)`;
       } else {
         el.style.width = `${a.w * z}px`;
         el.style.height = `${a.h * z}px`;
@@ -1463,7 +1576,7 @@
   async function ocrPage(worker, page) {
     const base = page.vp;
     const scale = Math.min(OCR_DPI / 72, OCR_MAX_CANVAS / Math.max(base.width, base.height));
-    const viewport = page.pdfPage.getViewport({ scale });
+    const viewport = viewportOf(page, scale);
     const canvas = document.createElement('canvas');
     canvas.width = Math.floor(viewport.width);
     canvas.height = Math.floor(viewport.height);
@@ -1521,7 +1634,9 @@
       span.style.left = `${w.x * z}px`;
       span.style.top = `${(w.baseline - w.size * 0.8) * z}px`;
       span.style.fontSize = `${size}px`;
-      span.style.transform = `scaleX(${(w.w * z) / natural})`;
+      // Turn around the start of the baseline when the page has been rotated.
+      span.style.transformOrigin = `0 ${0.8 * size}px`;
+      span.style.transform = `${w.rot ? `rotate(${w.rot}deg) ` : ''}scaleX(${(w.w * z) / natural})`;
       frag.append(span);
     }
     layer.append(frag);
@@ -1611,10 +1726,11 @@
       const outPages = out.getPages();
 
       pages().forEach((page, i) => {
+        const target = outPages[i];
+        target.setRotation(L.degrees(page.vp.rotation));
         const annots = state.annots.filter((a) => a.page === page.id);
         const words = state.ocr[page.id] || [];
         if (!annots.length && !words.length) return;
-        const target = outPages[i];
         // Wrap the existing content in q/Q so its graphics state can't skew our additions.
         target.translateContent(0, 0);
         const vp = page.vp;
@@ -1644,13 +1760,17 @@
               borderColor: color, borderWidth: a.width, color: a.fill ? color : undefined,
             });
           } else if (a.type === 'text') {
+            // a.rot: how far the box is turned clockwise on screen (pages rotated after typing).
+            const turn = ((a.rot || 0) * Math.PI) / 180;
             const lines = a.text.split('\n');
             lines.forEach((line, k) => {
               if (!line) return;
-              const bx = a.x + TEXT_PADDING;
-              const by = a.y + TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO;
+              const dx = TEXT_PADDING;
+              const dy = TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO;
+              const bx = a.x + dx * Math.cos(turn) - dy * Math.sin(turn);
+              const by = a.y + dx * Math.sin(turn) + dy * Math.cos(turn);
               const [x, y] = toPdf(bx, by);
-              target.drawText(clean(line), { x, y, size: a.size, font, color: hexToRgb(a.color), rotate: L.degrees(rot) });
+              target.drawText(clean(line), { x, y, size: a.size, font, color: hexToRgb(a.color), rotate: L.degrees(rot - (a.rot || 0)) });
             });
           } else if (a.type === 'ink') {
             const color = hexToRgb(a.color);
@@ -1798,7 +1918,7 @@
   }
 
   // Exposed for automated tests / debugging in the console.
-  window.pdfEditor = { state, panel, openFiles, save, runOcr, setTool, setZoom, movePage, deletePage, deletePages, togglePanel };
+  window.pdfEditor = { state, panel, openFiles, save, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel };
 
   showColor(state.colors[state.tool]);
   updateButtons();
