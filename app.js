@@ -1,12 +1,14 @@
 /* PDF Editor — runs entirely in the browser.
  *
  * pdf.js   renders pages and provides the selectable/searchable text layer.
- * pdf-lib  writes the edits back into the PDF when saving.
+ * pdf-lib  writes the edits (and merged / deleted / reordered pages) into a new PDF.
  * tesseract.js  recognizes text in scanned pages (OCR) so Ctrl+F can find it.
  *
- * Annotations are stored in "page units": CSS pixels of the page at 100% zoom,
- * measured from the top-left of the page as displayed (rotation applied).
- * They are converted to PDF coordinates only when saving.
+ * The open document is a list of pages (state.order) that can come from several
+ * source files. Annotations and OCR results are keyed by page id, and stored in
+ * "page units": CSS pixels of the page at 100% zoom, measured from the top-left
+ * of the page as displayed (rotation applied). They are converted to PDF
+ * coordinates only when saving.
  */
 (() => {
   'use strict';
@@ -23,32 +25,40 @@
   const TEXT_LINE_HEIGHT = 1.2;
   const TEXT_PADDING = 2;
   const HIGHLIGHT_OPACITY = 0.4;
-  const INK_WIDTH = 2;
   const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
   const OCR_DPI = 300;
   const OCR_MAX_CANVAS = 5000;
   const MIN_CHARS_FOR_TEXT_PAGE = 20;
 
   const DEFAULT_COLORS = {
-    select: '#ffeb3b',
+    select: '#000000',
     text: '#000000',
     highlight: '#ffeb3b',
     whiteout: '#ffffff',
-    draw: '#d32f2f',
+    rect: '#1e88e5',
+    draw: '#e53935',
   };
+
+  const PALETTE = [
+    '#000000', '#5f6368', '#9aa0a6', '#ffffff',
+    '#e53935', '#fb8c00', '#ffeb3b', '#c6ff00',
+    '#43a047', '#00bfa5', '#00b0ff', '#1e88e5',
+    '#3949ab', '#8e24aa', '#ff4081', '#6d4c41',
+  ];
 
   const state = {
     pdfjs: null,
-    doc: null,
-    bytes: null,
-    fileName: 'document.pdf',
-    pages: [],
+    sources: [],           // [{ name, bytes, doc }]
+    pageById: new Map(),   // id -> page record
+    order: [],             // page ids, in document order
     annots: [],
-    ocr: {},
+    ocr: {},               // page id -> recognized words
     zoom: 1.25,
     tool: 'select',
     colors: { ...DEFAULT_COLORS },
     fontSize: 14,
+    lineWidth: 2,
+    rectFill: false,
     selectedId: null,
     editingId: null,
     undo: [],
@@ -56,16 +66,22 @@
     dirty: false,
     busy: false,
     nextId: 1,
+    nextPageId: 1,
     loadToken: 0,
-    textReady: null,
+    textReady: Promise.resolve(),
+    colorLive: false,
   };
 
   const $ = (sel) => document.querySelector(sel);
   const ui = {
     fileInput: $('#file-input'),
+    addInput: $('#add-input'),
     saveBtn: $('#save-btn'),
     colorInput: $('#color-input'),
+    palette: $('#palette'),
     sizeInput: $('#size-input'),
+    lineInput: $('#line-input'),
+    fillInput: $('#fill-input'),
     undoBtn: $('#undo-btn'),
     redoBtn: $('#redo-btn'),
     deleteBtn: $('#delete-btn'),
@@ -119,14 +135,31 @@
     return state.annots.find((a) => a.id === id);
   }
 
+  function pages() {
+    return state.order.map((id) => state.pageById.get(id));
+  }
+
+  function allPages() {
+    return [...state.pageById.values()];
+  }
+
   function pageAt(el) {
     const pageEl = el.closest('.page');
-    return pageEl ? state.pages[Number(pageEl.dataset.index)] : null;
+    return pageEl ? state.pageById.get(pageEl.dataset.pageId) : null;
   }
 
   function pointInPage(page, evt) {
     const r = page.el.getBoundingClientRect();
     return { x: (evt.clientX - r.left) / state.zoom, y: (evt.clientY - r.top) / state.zoom };
+  }
+
+  function isPdf(file) {
+    return file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
+  }
+
+  // The tool whose color an annotation type uses.
+  function toolFor(type) {
+    return type === 'ink' ? 'draw' : type;
   }
 
   async function loadPdfjs() {
@@ -140,7 +173,7 @@
   // ----------------------------------------------------------- undo / redo
 
   function snapshot() {
-    return JSON.stringify({ annots: state.annots, ocr: state.ocr });
+    return JSON.stringify({ annots: state.annots, ocr: state.ocr, order: state.order });
   }
 
   function checkpoint() {
@@ -155,9 +188,11 @@
     const data = JSON.parse(snap);
     state.annots = data.annots;
     state.ocr = data.ocr;
+    state.order = data.order;
     state.selectedId = null;
     state.editingId = null;
-    state.pages.forEach((p) => {
+    layoutPages();
+    allPages().forEach((p) => {
       drawAnnots(p);
       drawOcrLayer(p);
     });
@@ -180,7 +215,8 @@
   }
 
   function updateButtons() {
-    const hasDoc = !!state.doc;
+    const hasDoc = state.order.length > 0;
+    document.body.classList.toggle('has-doc', state.pageById.size > 0);
     ui.saveBtn.disabled = !hasDoc || state.busy;
     ui.ocrBtn.disabled = !hasDoc || state.busy;
     ui.undoBtn.disabled = !state.undo.length;
@@ -191,10 +227,65 @@
 
   // -------------------------------------------------------------- loading
 
-  async function openFile(file) {
-    if (!file) return;
-    if (state.dirty && !confirm('You have unsaved changes. Open another file anyway?')) return;
-    const token = ++state.loadToken;
+  // Open replaces the current document; append (merge) adds pages to the end.
+  async function openFiles(fileList, append = false) {
+    const files = [...fileList].filter(isPdf);
+    if (!files.length) return;
+    if (state.busy) {
+      alert('Please wait for the current task to finish.');
+      return;
+    }
+    append = append && state.order.length > 0;
+    if (!append) {
+      if (state.dirty && !confirm('You have unsaved changes. Open another file anyway?')) return;
+      resetDocument();
+    }
+    const token = state.loadToken;
+    const before = append ? snapshot() : null;
+    let added = 0;
+    state.busy = true;
+    updateButtons();
+    try {
+      for (const file of files) {
+        const n = await addSource(file, token);
+        if (token !== state.loadToken) return;
+        added += n;
+      }
+    } finally {
+      state.busy = false;
+      updateButtons();
+    }
+    if (append && added) {
+      state.undo.push(before);
+      state.redo = [];
+      state.dirty = true;
+    } else if (files.length > 1) {
+      state.dirty = true;
+    }
+    const first = state.sources[0];
+    document.title = `${first ? first.name : 'PDF'} — PDF Editor`;
+    const n = state.order.length;
+    const merged = state.sources.length > 1 ? ` (merged from ${state.sources.length} files)` : '';
+    setStatus(`${n} page${n === 1 ? '' : 's'}${merged}.` +
+      (append && added ? ` Added ${added} page${added === 1 ? '' : 's'} at the end.` : ''));
+    updateButtons();
+  }
+
+  function resetDocument() {
+    state.loadToken++;
+    for (const s of state.sources) s.doc?.destroy();
+    for (const p of allPages()) p.task?.cancel();
+    observer.disconnect();
+    ui.pages.textContent = '';
+    Object.assign(state, {
+      sources: [], pageById: new Map(), order: [], annots: [], ocr: {},
+      undo: [], redo: [], selectedId: null, editingId: null, dirty: false,
+      textReady: Promise.resolve(),
+    });
+    updateButtons();
+  }
+
+  async function addSource(file, token) {
     try {
       setStatus(`Opening ${file.name}…`);
       const pdfjs = await loadPdfjs();
@@ -202,66 +293,107 @@
       const task = pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false });
       task.onPassword = (provide, reason) => {
         const again = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD;
-        const pw = prompt(again ? 'Wrong password. Try again:' : 'This PDF is password protected. Password:');
+        const pw = prompt(again ? `Wrong password for ${file.name}. Try again:` : `${file.name} is password protected. Password:`);
         if (pw == null) task.destroy();
         else provide(pw);
       };
       const doc = await task.promise;
-      if (token !== state.loadToken) return;
+      if (token !== state.loadToken) {
+        doc.destroy();
+        return 0;
+      }
+      const src = state.sources.length;
+      state.sources.push({ name: file.name || 'document.pdf', bytes, doc });
 
-      if (state.doc) state.doc.destroy();
-      Object.assign(state, {
-        doc, bytes, fileName: file.name || 'document.pdf',
-        pages: [], annots: [], ocr: {}, undo: [], redo: [],
-        selectedId: null, editingId: null, dirty: false,
-      });
-      document.title = `${state.fileName} — PDF Editor`;
-      document.body.classList.add('has-doc');
-      await buildPages(token);
+      const newPages = [];
+      for (let i = 0; i < doc.numPages; i++) {
+        const pdfPage = await doc.getPage(i + 1);
+        if (token !== state.loadToken) return 0;
+        const page = createPage(src, i, pdfPage);
+        state.order.push(page.id);
+        newPages.push(page);
+      }
+      layoutPages();
+      // Build text layers for every page so the browser's Ctrl+F covers the whole document.
+      const prev = state.textReady;
+      state.textReady = (async () => {
+        await prev;
+        for (const page of newPages) {
+          if (token !== state.loadToken) return;
+          await renderTextLayer(page);
+        }
+      })();
+      return doc.numPages;
     } catch (err) {
       console.error(err);
       setStatus(`Could not open ${file.name}: ${err.message || err}`);
+      alert(`Could not open ${file.name}: ${err.message || err}`);
+      return 0;
     }
   }
 
-  async function buildPages(token) {
-    ui.pages.textContent = '';
-    if (observer) observer.disconnect();
-    const { doc } = state;
-    for (let i = 0; i < doc.numPages; i++) {
-      const pdfPage = await doc.getPage(i + 1);
-      if (token !== state.loadToken) return;
-      const vp = pdfPage.getViewport({ scale: 1 });
-      const el = document.createElement('div');
-      el.className = 'page';
-      el.dataset.index = i;
+  function createPage(src, srcIndex, pdfPage) {
+    const id = `p${state.nextPageId++}`;
+    const vp = pdfPage.getViewport({ scale: 1 });
 
-      const canvas = document.createElement('canvas');
-      const textLayer = document.createElement('div');
-      textLayer.className = 'textLayer';
-      const ocrLayer = document.createElement('div');
-      ocrLayer.className = 'ocrLayer';
-      const annotLayer = document.createElement('div');
-      annotLayer.className = 'annotLayer';
-      el.append(canvas, textLayer, ocrLayer, annotLayer);
+    const wrap = document.createElement('div');
+    wrap.className = 'page-wrap';
+    const bar = document.createElement('div');
+    bar.className = 'page-bar';
+    const label = document.createElement('span');
+    label.className = 'page-label';
+    const srcName = document.createElement('span');
+    srcName.className = 'page-src';
+    srcName.textContent = state.sources[src].name;
+    const actions = document.createElement('span');
+    actions.className = 'page-actions';
+    actions.innerHTML =
+      '<button class="btn small" data-act="up" title="Move this page up">↑ Up</button>' +
+      '<button class="btn small" data-act="down" title="Move this page down">↓ Down</button>' +
+      '<button class="btn small danger" data-act="delete" title="Delete this page">Delete page</button>';
+    bar.append(label, srcName, actions);
 
-      const page = { index: i, pdfPage, vp, el, canvas, textLayer, ocrLayer, annotLayer, renderedZoom: 0, task: null };
-      state.pages.push(page);
-      sizePage(page);
-      ui.pages.append(el);
-      attachPageEvents(page);
-      observer.observe(el);
+    const el = document.createElement('div');
+    el.className = 'page';
+    el.dataset.pageId = id;
+    const canvas = document.createElement('canvas');
+    const textLayer = document.createElement('div');
+    textLayer.className = 'textLayer';
+    const ocrLayer = document.createElement('div');
+    ocrLayer.className = 'ocrLayer';
+    const annotLayer = document.createElement('div');
+    annotLayer.className = 'annotLayer';
+    el.append(canvas, textLayer, ocrLayer, annotLayer);
+    wrap.append(bar, el);
+    wrap.dataset.pageId = id;
+
+    const page = {
+      id, src, srcIndex, pdfPage, vp, wrap, el, label, canvas, textLayer, ocrLayer, annotLayer,
+      renderedZoom: 0, task: null, charCount: undefined,
+    };
+    state.pageById.set(id, page);
+    sizePage(page);
+    attachPageEvents(page);
+    observer.observe(el);
+    return page;
+  }
+
+  // Put page elements in document order and refresh their labels.
+  function layoutPages() {
+    const list = pages();
+    const keep = new Set(state.order);
+    for (const wrap of [...ui.pages.children]) {
+      if (!keep.has(wrap.dataset.pageId)) wrap.remove();
     }
-    updateButtons();
-    setStatus(`${state.fileName} — ${doc.numPages} page${doc.numPages === 1 ? '' : 's'}`);
-    // Build text layers for every page so the browser's Ctrl+F covers the whole document.
-    state.textReady = (async () => {
-      for (const page of state.pages) {
-        if (token !== state.loadToken) return;
-        await renderTextLayer(page);
-      }
-    })();
-    await state.textReady;
+    list.forEach((page, i) => {
+      if (ui.pages.children[i] !== page.wrap) ui.pages.insertBefore(page.wrap, ui.pages.children[i] || null);
+      page.label.textContent = `Page ${i + 1} of ${list.length}`;
+      page.wrap.querySelector('[data-act="up"]').disabled = i === 0;
+      page.wrap.querySelector('[data-act="down"]').disabled = i === list.length - 1;
+      page.wrap.querySelector('[data-act="delete"]').disabled = list.length === 1;
+    });
+    document.body.classList.toggle('multi-source', state.sources.length > 1);
+    if (state.selectedId != null && !keep.has(getAnnot(state.selectedId)?.page)) select(null);
   }
 
   function sizePage(page) {
@@ -272,7 +404,7 @@
 
   const observer = new IntersectionObserver((entries) => {
     for (const entry of entries) {
-      if (entry.isIntersecting) renderCanvas(state.pages[Number(entry.target.dataset.index)]);
+      if (entry.isIntersecting) renderCanvas(state.pageById.get(entry.target.dataset.pageId));
     }
   }, { root: ui.viewer, rootMargin: '600px 0px' });
 
@@ -311,7 +443,7 @@
       await layer.render();
       page.textLayer.addEventListener('mousedown', () => page.textLayer.classList.add('selecting'));
     } catch (err) {
-      console.error('Text layer failed for page', page.index + 1, err);
+      console.error('Text layer failed for page', page.id, err);
       page.charCount = page.charCount || 0;
     }
   }
@@ -320,10 +452,45 @@
     document.querySelectorAll('.textLayer.selecting').forEach((el) => el.classList.remove('selecting'));
   });
 
+  // ---------------------------------------------------------- page actions
+
+  function movePage(id, dir) {
+    const i = state.order.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= state.order.length) return;
+    finishEditing();
+    checkpoint();
+    const order = [...state.order];
+    [order[i], order[j]] = [order[j], order[i]];
+    state.order = order;
+    layoutPages();
+    state.pageById.get(id).wrap.scrollIntoView({ block: 'nearest' });
+    setStatus(`Moved page to position ${j + 1}.`);
+  }
+
+  function deletePage(id) {
+    if (state.order.length <= 1) return;
+    finishEditing();
+    const pos = state.order.indexOf(id) + 1;
+    checkpoint();
+    state.order = state.order.filter((x) => x !== id);
+    layoutPages();
+    setStatus(`Deleted page ${pos}. Press Ctrl+Z (Undo) to bring it back.`);
+  }
+
+  ui.pages.addEventListener('click', (e) => {
+    const btn = e.target.closest('.page-bar button');
+    if (!btn) return;
+    const id = btn.closest('.page-wrap').dataset.pageId;
+    if (btn.dataset.act === 'up') movePage(id, -1);
+    else if (btn.dataset.act === 'down') movePage(id, 1);
+    else if (btn.dataset.act === 'delete') deletePage(id);
+  });
+
   // ----------------------------------------------------------------- zoom
 
   function setZoom(zoom) {
-    if (!state.doc) return;
+    if (!state.order.length) return;
     zoom = Math.min(5, Math.max(0.25, zoom));
     if (Math.abs(zoom - state.zoom) < 1e-3) return;
     finishEditing();
@@ -331,15 +498,15 @@
     const v = ui.viewer;
     const relY = (v.scrollTop + v.clientHeight / 2) / v.scrollHeight;
     state.zoom = zoom;
-    for (const page of state.pages) {
+    for (const page of allPages()) {
       sizePage(page);
       drawAnnots(page);
       drawOcrLayer(page);
     }
     v.scrollTop = relY * v.scrollHeight - v.clientHeight / 2;
-    for (const page of state.pages) {
+    const vr = v.getBoundingClientRect();
+    for (const page of pages()) {
       const r = page.el.getBoundingClientRect();
-      const vr = v.getBoundingClientRect();
       if (r.bottom > vr.top - 600 && r.top < vr.bottom + 600) renderCanvas(page);
     }
     updateButtons();
@@ -352,8 +519,8 @@
   }
 
   function zoomFit() {
-    if (!state.pages.length) return;
-    const widest = Math.max(...state.pages.map((p) => p.vp.width));
+    if (!state.order.length) return;
+    const widest = Math.max(...pages().map((p) => p.vp.width));
     setZoom((ui.viewer.clientWidth - 48) / widest);
   }
 
@@ -363,12 +530,12 @@
     const layer = page.annotLayer;
     layer.textContent = '';
     for (const a of state.annots) {
-      if (a.page === page.index) layer.append(createAnnotEl(a));
+      if (a.page === page.id) layer.append(createAnnotEl(a));
     }
   }
 
   function redrawPageOf(annot) {
-    const page = state.pages[annot.page];
+    const page = state.pageById.get(annot.page);
     if (page) drawAnnots(page);
   }
 
@@ -405,10 +572,16 @@
         el.style.fontSize = `${a.size * z}px`;
         el.style.color = a.color;
       } else {
-        el.className = `annot ${a.type === 'highlight' ? 'hl' : 'wo'}`;
         el.style.width = `${a.w * z}px`;
         el.style.height = `${a.h * z}px`;
-        el.style.background = a.color;
+        if (a.type === 'rect') {
+          el.className = 'annot rect';
+          el.style.border = `${a.width * z}px solid ${a.color}`;
+          el.style.background = a.fill ? a.color : 'transparent';
+        } else {
+          el.className = `annot ${a.type === 'highlight' ? 'hl' : 'wo'}`;
+          el.style.background = a.color;
+        }
       }
     }
     el.dataset.id = a.id;
@@ -420,6 +593,19 @@
     return ui.pages.querySelector(`.annot[data-id="${id}"]`);
   }
 
+  // Re-render one annotation after a property change. A text box being typed
+  // in is styled in place so the caret isn't lost.
+  function refreshAnnot(a) {
+    const el = annotEl(a.id);
+    if (!el) return;
+    if (a.id === state.editingId) {
+      el.style.color = a.color;
+      el.style.fontSize = `${a.size * state.zoom}px`;
+    } else {
+      el.replaceWith(createAnnotEl(a));
+    }
+  }
+
   function select(id) {
     if (state.selectedId === id) return;
     if (state.selectedId != null) annotEl(state.selectedId)?.classList.remove('selected');
@@ -428,9 +614,15 @@
       annotEl(id)?.classList.add('selected');
       const a = getAnnot(id);
       if (a) {
-        ui.colorInput.value = a.color;
+        showColor(a.color);
         if (a.type === 'text') ui.sizeInput.value = String(a.size);
+        if (a.type === 'rect' || a.type === 'ink') ui.lineInput.value = String(a.width);
+        if (a.type === 'rect') ui.fillInput.checked = !!a.fill;
       }
+    } else {
+      showColor(state.colors[state.tool]);
+      ui.lineInput.value = String(state.lineWidth);
+      ui.fillInput.checked = state.rectFill;
     }
     updateButtons();
   }
@@ -523,6 +715,8 @@
 
   // -------------------------------------------------------- pointer input
 
+  const DRAG_RECT_TOOLS = new Set(['highlight', 'whiteout', 'rect']);
+
   function attachPageEvents(page) {
     const layer = page.annotLayer;
     let drag = null;
@@ -551,19 +745,19 @@
         finishEditing();
         const size = state.fontSize;
         const a = addAnnot({
-          page: page.index, type: 'text', text: '',
+          page: page.id, type: 'text', text: '',
           x: pt.x - TEXT_PADDING, y: pt.y - size * TEXT_LINE_HEIGHT / 2 - TEXT_PADDING,
           size, color: state.colors.text, isNew: true,
         });
         startEditing(a.id);
         return;
-      } else if (tool === 'highlight' || tool === 'whiteout') {
+      } else if (DRAG_RECT_TOOLS.has(tool)) {
         e.preventDefault();
         finishEditing();
         select(null);
-        const el = document.createElement('div');
-        el.className = `annot draft ${tool === 'highlight' ? 'hl' : 'wo'}`;
-        el.style.background = state.colors[tool];
+        const proto = { type: tool, x: pt.x, y: pt.y, w: 0, h: 0, color: state.colors[tool], width: state.lineWidth, fill: state.rectFill };
+        const el = createAnnotEl(proto);
+        el.classList.add('draft');
         if (tool === 'whiteout') el.style.outline = '1px dashed #999';
         layer.append(el);
         drag = { kind: 'rect', tool, start: pt, el, cur: pt };
@@ -578,7 +772,7 @@
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
         line.setAttribute('fill', 'none');
         line.setAttribute('stroke', state.colors.draw);
-        line.setAttribute('stroke-width', INK_WIDTH);
+        line.setAttribute('stroke-width', state.lineWidth);
         line.setAttribute('stroke-linecap', 'round');
         line.setAttribute('stroke-linejoin', 'round');
         svg.append(line);
@@ -601,8 +795,7 @@
           drag.base = JSON.parse(drag.orig);
         }
         moveAnnot(drag.a, drag.base, dx, dy);
-        const el = annotEl(drag.a.id);
-        if (el) el.replaceWith(createAnnotEl(drag.a));
+        refreshAnnot(drag.a);
       } else if (drag.kind === 'rect') {
         drag.cur = pt;
         const r = normRect(drag.start, pt);
@@ -626,12 +819,14 @@
         d.el.remove();
         const r = normRect(d.start, d.cur);
         if (r.w > 2 && r.h > 2) {
-          addAnnot({ page: page.index, type: d.tool, ...r, color: state.colors[d.tool] });
+          const a = { page: page.id, type: d.tool, ...r, color: state.colors[d.tool] };
+          if (d.tool === 'rect') Object.assign(a, { width: state.lineWidth, fill: state.rectFill });
+          addAnnot(a);
         }
       } else if (d.kind === 'ink') {
         d.svg.remove();
         if (e.type !== 'pointercancel') {
-          addAnnot({ page: page.index, type: 'ink', points: d.points, color: state.colors.draw, width: INK_WIDTH });
+          addAnnot({ page: page.id, type: 'ink', points: d.points, color: state.colors.draw, width: state.lineWidth });
         }
       }
     };
@@ -674,11 +869,11 @@
 
   // Clicking empty page space in select mode deselects.
   ui.pages.addEventListener('pointerdown', (e) => {
-    if (state.tool === 'select' && !e.target.closest('.annot')) select(null);
+    if (state.tool === 'select' && e.target.closest('.page') && !e.target.closest('.annot')) select(null);
   });
 
-  // Highlights let clicks through so the text under them stays selectable;
-  // a plain click (no text selected) on a highlight selects it instead.
+  // Highlights and rectangles let clicks through so the text under them stays
+  // selectable; a plain click (no text selected) on one selects it instead.
   ui.pages.addEventListener('click', (e) => {
     if (state.tool !== 'select' || e.target.closest('.annot')) return;
     const sel = window.getSelection();
@@ -686,7 +881,7 @@
     const page = pageAt(e.target);
     if (!page) return;
     const pt = pointInPage(page, e);
-    const hit = state.annots.filter((a) => a.page === page.index && a.type === 'highlight' &&
+    const hit = state.annots.filter((a) => a.page === page.id && (a.type === 'highlight' || a.type === 'rect') &&
       pt.x >= a.x && pt.x <= a.x + a.w && pt.y >= a.y && pt.y <= a.y + a.h).pop();
     if (hit) select(hit.id);
   });
@@ -697,12 +892,13 @@
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
     const rectsByPage = new Map();
+    const list = pages();
     for (let i = 0; i < sel.rangeCount; i++) {
       for (const r of sel.getRangeAt(i).getClientRects()) {
         if (r.width < 1 || r.height < 1) continue;
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
-        const page = state.pages.find((p) => {
+        const page = list.find((p) => {
           const pr = p.el.getBoundingClientRect();
           return cx >= pr.left && cx <= pr.right && cy >= pr.top && cy <= pr.bottom;
         });
@@ -710,17 +906,17 @@
         const pr = page.el.getBoundingClientRect();
         const z = state.zoom;
         const rect = { x: (r.left - pr.left) / z, y: (r.top - pr.top) / z, w: r.width / z, h: r.height / z };
-        if (!rectsByPage.has(page.index)) rectsByPage.set(page.index, []);
-        rectsByPage.get(page.index).push(rect);
+        if (!rectsByPage.has(page.id)) rectsByPage.set(page.id, []);
+        rectsByPage.get(page.id).push(rect);
       }
     }
     if (!rectsByPage.size) return false;
     checkpoint();
-    for (const [index, rects] of rectsByPage) {
+    for (const [id, rects] of rectsByPage) {
       for (const r of mergeLineRects(rects)) {
-        state.annots.push({ id: state.nextId++, page: index, type: 'highlight', ...r, color: state.colors.highlight });
+        state.annots.push({ id: state.nextId++, page: id, type: 'highlight', ...r, color: state.colors.highlight });
       }
-      drawAnnots(state.pages[index]);
+      drawAnnots(state.pageById.get(id));
     }
     sel.removeAllRanges();
     setStatus('Highlighted selected text.');
@@ -750,7 +946,7 @@
     return out;
   }
 
-  // ------------------------------------------------------------- tools
+  // ---------------------------------------------------- tools and styling
 
   function setTool(tool) {
     if (tool === 'highlight' && state.tool === 'select' && highlightSelection()) return;
@@ -759,7 +955,7 @@
     document.body.dataset.tool = tool;
     ui.toolButtons.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
     if (tool !== 'select') select(null);
-    ui.colorInput.value = state.colors[tool];
+    showColor(state.colors[tool]);
   }
 
   ui.toolButtons.forEach((btn) => {
@@ -768,64 +964,94 @@
     btn.addEventListener('click', () => setTool(btn.dataset.tool));
   });
 
-  ui.colorInput.addEventListener('input', () => {
-    const color = ui.colorInput.value;
+  // Palette swatches, plus the browser's color picker for any other color.
+  for (const color of PALETTE) {
+    const sw = document.createElement('button');
+    sw.className = 'swatch';
+    sw.dataset.color = color;
+    sw.style.background = color;
+    sw.title = color;
+    sw.setAttribute('aria-label', `Color ${color}`);
+    // Don't take focus, so a text box being typed in stays active.
+    sw.addEventListener('mousedown', (e) => e.preventDefault());
+    sw.addEventListener('click', () => applyColor(color, true));
+    ui.palette.append(sw);
+  }
+
+  function showColor(color) {
+    ui.colorInput.value = color;
+    for (const sw of ui.palette.children) sw.classList.toggle('active', sw.dataset.color === color.toLowerCase());
+  }
+
+  // Change the color of the selected item (if any) and of the current tool.
+  function applyColor(color, commit) {
+    color = color.toLowerCase();
+    showColor(color);
     const a = getAnnot(state.selectedId);
-    if (a && state.tool === 'select') {
+    if (a) {
+      if (commit) checkpoint();
       a.color = color;
-      const el = annotEl(a.id);
-      if (el) el.replaceWith(createAnnotEl(a));
-    } else {
-      state.colors[state.tool] = color;
+      state.colors[toolFor(a.type)] = color;
+      refreshAnnot(a);
     }
+    state.colors[state.tool] = color;
+  }
+
+  ui.colorInput.addEventListener('input', () => {
+    // One undo step per visit to the picker, not one per tiny drag.
+    applyColor(ui.colorInput.value, !state.colorLive);
+    state.colorLive = true;
   });
   ui.colorInput.addEventListener('change', () => {
+    state.colorLive = false;
+  });
+
+  // Apply a property change to the selected item if it has that property.
+  function applyToSelected(types, apply) {
     const a = getAnnot(state.selectedId);
-    if (a && state.tool === 'select') {
-      const now = a.color;
-      a.color = state.colorBefore ?? now;
-      checkpoint();
-      a.color = now;
-      state.colors[a.type === 'ink' ? 'draw' : a.type] = now;
-    }
-    state.colorBefore = undefined;
-  });
-  ui.colorInput.addEventListener('focus', () => {
-    state.colorBefore = getAnnot(state.selectedId)?.color;
-  });
-  ui.colorInput.addEventListener('click', () => {
-    state.colorBefore = getAnnot(state.selectedId)?.color;
-  });
+    if (!a || !types.includes(a.type)) return;
+    checkpoint();
+    apply(a);
+    refreshAnnot(a);
+  }
 
   ui.sizeInput.addEventListener('change', () => {
     state.fontSize = Number(ui.sizeInput.value);
-    const a = getAnnot(state.selectedId);
-    if (a && a.type === 'text') {
-      const editing = state.editingId === a.id;
-      if (editing) finishEditing();
-      checkpoint();
-      a.size = state.fontSize;
-      redrawPageOf(a);
-      if (editing) startEditing(a.id);
-    }
+    applyToSelected(['text'], (a) => { a.size = state.fontSize; });
   });
+
+  ui.lineInput.addEventListener('change', () => {
+    state.lineWidth = Number(ui.lineInput.value);
+    applyToSelected(['rect', 'ink'], (a) => { a.width = state.lineWidth; });
+  });
+
+  ui.fillInput.addEventListener('change', () => {
+    state.rectFill = ui.fillInput.checked;
+    applyToSelected(['rect'], (a) => { a.fill = state.rectFill; });
+  });
+
+  // Hand focus back after using a toolbar control so tool shortcuts keep working.
+  for (const control of [ui.sizeInput, ui.lineInput, ui.fillInput, ui.colorInput]) {
+    control.addEventListener('change', () => control.blur());
+  }
 
   // ------------------------------------------------------------- OCR
 
   async function runOcr() {
-    if (!state.doc || state.busy) return;
+    if (!state.order.length || state.busy) return;
     finishEditing();
-    if (state.textReady) {
-      setStatus('Checking which pages need text recognition…');
-      await state.textReady;
-    }
-    let targets = state.pages.filter((p) => (p.charCount ?? 0) < MIN_CHARS_FOR_TEXT_PAGE && !state.ocr[p.index]);
+    setStatus('Checking which pages need text recognition…');
+    await state.textReady;
+    let targets = pages().filter((p) => (p.charCount ?? 0) < MIN_CHARS_FOR_TEXT_PAGE && !state.ocr[p.id]);
     if (!targets.length) {
       const again = confirm(
         'Every page already has searchable text, so Ctrl+F should already work.\n\n' +
         'Run text recognition (OCR) on all pages anyway? Use this if searching still misses words.');
-      if (!again) return;
-      targets = state.pages;
+      if (!again) {
+        setStatus('Every page already has searchable text.');
+        return;
+      }
+      targets = pages();
     }
     if (typeof Tesseract === 'undefined') {
       alert('The OCR engine could not be loaded. Check your internet connection and reload the page.');
@@ -849,9 +1075,9 @@
         },
       });
       for (const page of targets) {
-        setStatus(`Recognizing text on page ${page.index + 1} (${done + 1} of ${targets.length})…`);
-        const words = await ocrPage(worker, page);
-        state.ocr[page.index] = words;
+        const pos = state.order.indexOf(page.id) + 1;
+        setStatus(`Recognizing text on page ${pos} (${done + 1} of ${targets.length})…`);
+        state.ocr[page.id] = await ocrPage(worker, page);
         drawOcrLayer(page);
         done++;
         setProgress(done / targets.length);
@@ -859,7 +1085,7 @@
       state.undo.push(before);
       state.redo = [];
       state.dirty = true;
-      const total = targets.reduce((n, p) => n + (state.ocr[p.index]?.length || 0), 0);
+      const total = targets.reduce((n, p) => n + (state.ocr[p.id]?.length || 0), 0);
       setStatus(`OCR finished: found ${total} words on ${targets.length} page${targets.length === 1 ? '' : 's'}. ` +
         'Click Save to download a searchable PDF.');
     } catch (err) {
@@ -925,7 +1151,7 @@
   function drawOcrLayer(page) {
     const layer = page.ocrLayer;
     layer.textContent = '';
-    const words = state.ocr[page.index];
+    const words = state.ocr[page.id];
     if (!words) return;
     const z = state.zoom;
     const frag = document.createDocumentFragment();
@@ -971,33 +1197,92 @@
     };
   }
 
+  async function loadForSaving(source) {
+    try {
+      return await PDFLib.PDFDocument.load(source.bytes);
+    } catch (err) {
+      if (/encrypt/i.test(err.message)) {
+        throw new Error(`${source.name} is encrypted/protected, and saving changes to protected PDFs is not supported. ` +
+          'Try "Print → Save as PDF" in your browser to make an unprotected copy first.');
+      }
+      throw err;
+    }
+  }
+
+  // Build the output document with the pages in state.order. When the first
+  // file's pages are still in their original order (some may be deleted) and
+  // any other files' pages come after them, edit that file in place so its
+  // bookmarks, metadata and form fields survive. Otherwise assemble a new PDF.
+  async function assemblePages() {
+    const L = PDFLib;
+    const list = pages();
+    const libDocs = new Map();
+    const lib = async (src) => {
+      if (!libDocs.has(src)) libDocs.set(src, await loadForSaving(state.sources[src]));
+      return libDocs.get(src);
+    };
+
+    let inPlace = list.some((p) => p.src === 0);
+    let last = -1;
+    let seenOther = false;
+    for (const p of list) {
+      if (p.src !== 0) {
+        seenOther = true;
+      } else if (seenOther || p.srcIndex < last) {
+        inPlace = false;
+        break;
+      } else {
+        last = p.srcIndex;
+      }
+    }
+
+    let out;
+    let toCopy;
+    if (inPlace) {
+      out = await lib(0);
+      const keep = new Set(list.filter((p) => p.src === 0).map((p) => p.srcIndex));
+      for (let i = out.getPageCount() - 1; i >= 0; i--) {
+        if (!keep.has(i)) out.removePage(i);
+      }
+      toCopy = list.filter((p) => p.src !== 0);
+    } else {
+      out = await L.PDFDocument.create();
+      toCopy = list;
+    }
+
+    // Copy pages from each source in one batch, so shared fonts/images are copied once.
+    const copied = new Map();
+    const bySource = new Map();
+    for (const p of toCopy) {
+      if (!bySource.has(p.src)) bySource.set(p.src, []);
+      bySource.get(p.src).push(p);
+    }
+    for (const [src, srcPages] of bySource) {
+      const cps = await out.copyPages(await lib(src), srcPages.map((p) => p.srcIndex));
+      srcPages.forEach((p, k) => copied.set(p.id, cps[k]));
+    }
+    for (const p of toCopy) out.addPage(copied.get(p.id));
+    return out;
+  }
+
   async function save() {
-    if (!state.doc || state.busy) return;
+    if (!state.order.length || state.busy) return;
     finishEditing();
     const L = PDFLib;
     state.busy = true;
     updateButtons();
     setStatus('Saving…');
     try {
-      let out;
-      try {
-        out = await L.PDFDocument.load(state.bytes);
-      } catch (err) {
-        if (/encrypt/i.test(err.message)) {
-          throw new Error('this PDF is encrypted/protected, and saving changes to protected PDFs is not supported. ' +
-            'Try "Print → Save as PDF" in your browser to make an unprotected copy first.');
-        }
-        throw err;
-      }
+      const out = await assemblePages();
       const font = await out.embedFont(L.StandardFonts.Helvetica);
       const clean = makeSanitizer(font);
-      const pdfPages = out.getPages();
+      const outPages = out.getPages();
 
-      for (const page of state.pages) {
-        const annots = state.annots.filter((a) => a.page === page.index);
-        const words = state.ocr[page.index] || [];
-        if (!annots.length && !words.length) continue;
-        const target = pdfPages[page.index];
+      pages().forEach((page, i) => {
+        const annots = state.annots.filter((a) => a.page === page.id);
+        const words = state.ocr[page.id] || [];
+        if (!annots.length && !words.length) return;
+        const target = outPages[i];
         // Wrap the existing content in q/Q so its graphics state can't skew our additions.
         target.translateContent(0, 0);
         const vp = page.vp;
@@ -1016,12 +1301,22 @@
             target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color), opacity: HIGHLIGHT_OPACITY, blendMode: L.BlendMode.Multiply });
           } else if (a.type === 'whiteout') {
             target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color) });
+          } else if (a.type === 'rect') {
+            // On screen the border is drawn inside the box; PDF strokes are
+            // centered on the edge, so inset by half the line width.
+            const r = rectToPdf(a);
+            const half = Math.min(a.width / 2, r.width / 2, r.height / 2);
+            const color = hexToRgb(a.color);
+            target.drawRectangle({
+              x: r.x + half, y: r.y + half, width: r.width - 2 * half, height: r.height - 2 * half,
+              borderColor: color, borderWidth: a.width, color: a.fill ? color : undefined,
+            });
           } else if (a.type === 'text') {
             const lines = a.text.split('\n');
-            lines.forEach((line, i) => {
+            lines.forEach((line, k) => {
               if (!line) return;
               const bx = a.x + TEXT_PADDING;
-              const by = a.y + TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * i + a.size * BASELINE_RATIO;
+              const by = a.y + TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO;
               const [x, y] = toPdf(bx, by);
               target.drawText(clean(line), { x, y, size: a.size, font, color: hexToRgb(a.color), rotate: L.degrees(rot) });
             });
@@ -1031,21 +1326,22 @@
             if (pts.length === 1) {
               target.drawCircle({ x: pts[0][0], y: pts[0][1], size: a.width / 2, color });
             }
-            for (let i = 1; i < pts.length; i++) {
+            for (let k = 1; k < pts.length; k++) {
               target.drawLine({
-                start: { x: pts[i - 1][0], y: pts[i - 1][1] },
-                end: { x: pts[i][0], y: pts[i][1] },
+                start: { x: pts[k - 1][0], y: pts[k - 1][1] },
+                end: { x: pts[k][0], y: pts[k][1] },
                 thickness: a.width, color, lineCap: L.LineCapStyle.Round,
               });
             }
           }
         }
-      }
+      });
 
       const bytes = await out.save();
-      download(bytes, editedName(state.fileName));
+      const name = outputName();
+      download(bytes, name);
       state.dirty = false;
-      setStatus(`Saved ${editedName(state.fileName)}.`);
+      setStatus(`Saved ${name}.`);
     } catch (err) {
       console.error(err);
       setStatus(`Save failed: ${err.message || err}`);
@@ -1083,9 +1379,9 @@
     target.pushOperators(...ops);
   }
 
-  function editedName(name) {
-    const baseName = name.replace(/\.pdf$/i, '');
-    return `${baseName}-edited.pdf`;
+  function outputName() {
+    const base = (state.sources[0]?.name || 'document.pdf').replace(/\.pdf$/i, '');
+    return `${base}-${state.sources.length > 1 ? 'merged' : 'edited'}.pdf`;
   }
 
   function download(bytes, name) {
@@ -1103,8 +1399,12 @@
   // ------------------------------------------------------------- wiring
 
   ui.fileInput.addEventListener('change', () => {
-    openFile(ui.fileInput.files[0]);
+    openFiles(ui.fileInput.files, false);
     ui.fileInput.value = '';
+  });
+  ui.addInput.addEventListener('change', () => {
+    openFiles(ui.addInput.files, true);
+    ui.addInput.value = '';
   });
   ui.saveBtn.addEventListener('click', save);
   ui.ocrBtn.addEventListener('click', runOcr);
@@ -1115,6 +1415,7 @@
   ui.zoomOut.addEventListener('click', () => zoomStep(-1));
   ui.zoomFit.addEventListener('click', zoomFit);
 
+  // Dropping files: opens them, or adds them to the end if a document is open.
   ui.viewer.addEventListener('dragover', (e) => {
     e.preventDefault();
     ui.viewer.classList.add('dragover');
@@ -1123,11 +1424,10 @@
   ui.viewer.addEventListener('drop', (e) => {
     e.preventDefault();
     ui.viewer.classList.remove('dragover');
-    const file = [...e.dataTransfer.files].find((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
-    if (file) openFile(file);
+    openFiles(e.dataTransfer.files, true);
   });
 
-  const TOOL_KEYS = { v: 'select', t: 'text', h: 'highlight', w: 'whiteout', d: 'draw' };
+  const TOOL_KEYS = { v: 'select', t: 'text', h: 'highlight', w: 'whiteout', r: 'rect', d: 'draw' };
 
   document.addEventListener('keydown', (e) => {
     if (state.editingId != null) return;
@@ -1174,8 +1474,9 @@
   });
 
   // Exposed for automated tests / debugging in the console.
-  window.pdfEditor = { state, openFile, save, runOcr, setTool, setZoom };
+  window.pdfEditor = { state, openFiles, save, runOcr, setTool, setZoom, movePage, deletePage };
 
+  showColor(state.colors[state.tool]);
   updateButtons();
   if (typeof PDFLib === 'undefined') {
     setStatus('Could not load the PDF libraries. Check your internet connection and reload.');

@@ -93,6 +93,28 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Color palette */
+.palette {
+  display: grid;
+  grid-template-columns: repeat(8, 18px);
+  gap: 3px;
+}
+.swatch {
+  width: 18px;
+  height: 14px;
+  padding: 0;
+  border: 1px solid rgba(0, 0, 0, .25);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.swatch:hover { transform: scale(1.15); }
+.swatch.active { outline: 2px solid var(--primary); outline-offset: 1px; }
+.custom-color { margin-left: 4px; }
+
+.btn.small { height: 24px; padding: 0 8px; font-size: 12px; }
+.btn.danger { color: #b42318; border-color: #f1b5af; }
+.btn.danger:hover:not(:disabled) { background: #fdecea; }
+
 /* ---------- Viewer ---------- */
 
 #viewer {
@@ -136,6 +158,24 @@ kbd {
   background: #f8f9fb;
   font-size: 12px;
 }
+
+.page-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.page-bar {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  color: #e8eaed;
+  font-size: 12px;
+}
+.page-src { display: none; color: #bdc1c6; }
+body.multi-source .page-src { display: inline; }
+.page-src::before { content: "· "; }
+.page-actions { display: inline-flex; gap: 4px; }
 
 .page {
   position: relative;
@@ -222,6 +262,7 @@ body:not([data-tool="select"]) .annotLayer {
 body[data-tool="text"] .annotLayer { cursor: text; }
 body[data-tool="highlight"] .annotLayer,
 body[data-tool="whiteout"] .annotLayer,
+body[data-tool="rect"] .annotLayer,
 body[data-tool="draw"] .annotLayer { cursor: crosshair; }
 
 .annot {
@@ -229,12 +270,15 @@ body[data-tool="draw"] .annotLayer { cursor: crosshair; }
   pointer-events: auto;
 }
 body[data-tool="select"] .annot { cursor: move; }
-body[data-tool="select"] .annot.hl { pointer-events: none; }
+/* Highlights and rectangles don't block selecting the text under them;
+   click one to select it, then drag to move it. */
+body[data-tool="select"] .annot:is(.hl, .rect):not(.selected) { pointer-events: none; }
 body[data-tool="select"] .annot.wo:hover { outline: 1px dashed #aaa; }
 body[data-tool="select"] .annot.txt.editing,
 body[data-tool="text"] .annot.txt { cursor: text; }
 body[data-tool="highlight"] .annot,
 body[data-tool="whiteout"] .annot,
+body[data-tool="rect"] .annot,
 body[data-tool="draw"] .annot { pointer-events: none; }
 
 .annot.hl { mix-blend-mode: multiply; opacity: .4; }
@@ -251,6 +295,7 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   background: rgba(255, 255, 255, .6);
   box-shadow: 0 0 0 1px var(--select);
 }
+.annot.rect { box-sizing: border-box; }
 .annot.ink { overflow: visible; }
 .annot.selected { outline: 2px dashed var(--select); outline-offset: 2px; }
 .annot.draft { pointer-events: none; }

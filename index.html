@@ -14,7 +14,11 @@
     <div class="group">
       <label class="btn" title="Open a PDF (Ctrl+O)">
         Open
-        <input id="file-input" type="file" accept="application/pdf,.pdf" hidden>
+        <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+      </label>
+      <label class="btn" title="Merge: add the pages of other PDFs to the end of this one">
+        Add PDF
+        <input id="add-input" type="file" accept="application/pdf,.pdf" multiple hidden>
       </label>
       <button id="save-btn" class="btn primary" title="Download the edited PDF (Ctrl+S)" disabled>Save</button>
     </div>
@@ -24,20 +28,36 @@
       <button class="btn tool" data-tool="text" title="Type text anywhere (T)">Text</button>
       <button class="btn tool" data-tool="highlight" title="Highlight: drag a box, or select text first and press H (H)">Highlight</button>
       <button class="btn tool" data-tool="whiteout" title="Cover existing content with a white box (W)">White-out</button>
+      <button class="btn tool" data-tool="rect" title="Draw a rectangle (R)">Rectangle</button>
       <button class="btn tool" data-tool="draw" title="Freehand pen (D)">Draw</button>
     </div>
 
-    <div class="group">
-      <label class="field" title="Color for the current tool / selected item">
-        <span>Color</span>
-        <input id="color-input" type="color" value="#ffeb3b">
+    <div class="group colors" title="Color for the current tool, or the selected item">
+      <div id="palette" class="palette" role="group" aria-label="Colors"></div>
+      <label class="field custom-color" title="Pick any color">
+        <input id="color-input" type="color" value="#000000">
+        <span>Custom</span>
       </label>
+    </div>
+
+    <div class="group">
       <label class="field" title="Font size for text">
-        <span>Size</span>
+        <span>Text size</span>
         <select id="size-input">
           <option>8</option><option>10</option><option>12</option><option selected>14</option>
           <option>16</option><option>18</option><option>24</option><option>32</option><option>48</option>
         </select>
+      </label>
+      <label class="field" title="Line thickness for rectangles and drawing">
+        <span>Line</span>
+        <select id="line-input">
+          <option>1</option><option selected>2</option><option>3</option><option>4</option>
+          <option>6</option><option>8</option><option>12</option>
+        </select>
+      </label>
+      <label class="field" title="Fill rectangles with the color">
+        <input id="fill-input" type="checkbox">
+        <span>Fill</span>
       </label>
     </div>
 
@@ -62,11 +82,13 @@
   <main id="viewer">
     <div id="drop-hint" class="drop-hint">
       <h1>PDF Editor</h1>
-      <p>Drop a PDF here, or click <strong>Open</strong>.</p>
+      <p>Drop PDFs here, or click <strong>Open</strong>. Pick several files to merge them.</p>
       <ul>
         <li><strong>Text</strong> — click anywhere on a page and type.</li>
         <li><strong>Highlight</strong> — drag over an area, or select text and press <kbd>H</kbd>.</li>
         <li><strong>White-out</strong> — cover existing content, then type over it to "edit" it.</li>
+        <li><strong>Rectangle</strong> and <strong>Draw</strong> — boxes and freehand lines in any color.</li>
+        <li><strong>Add PDF</strong> — merge other PDFs onto the end. Each page has buttons to move or delete it.</li>
         <li><strong>Make searchable</strong> — reads scanned pages (OCR) so <kbd>Ctrl</kbd>+<kbd>F</kbd> finds their words.</li>
       </ul>
       <p class="muted">Everything runs in your browser. Your files are never uploaded.</p>
