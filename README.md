@@ -34,7 +34,7 @@ Both web addresses work only after this.
 
 1. On GitHub, open this repository and go to **Settings → Pages**.
 2. Under **Build and deployment → Source**, choose **Deploy from a branch**.
-3. Pick the branch that has these files (for example `main`), choose the **/ (root)** folder, and click **Save**.
+3. Pick the branch that has these files (right now that is `claude/pdf-edit-highlight-search-okg0xt`, the only branch), choose the **/ (root)** folder, and click **Save**.
 4. Wait a minute or two, then refresh. The address appears at the top of the page.
 
 ### Using the browser version
