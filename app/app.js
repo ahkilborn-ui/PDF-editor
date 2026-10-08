@@ -237,7 +237,7 @@
     ui.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
     // A dot in the tab title while there are unsaved changes.
     const name = state.saveHandle?.name || state.sources[0]?.name;
-    document.title = `${state.dirty ? '• ' : ''}${name ? `${name} — ` : ''}PDF Editor`;
+    document.title = `${name ? `${name}${state.dirty ? ' *' : ''} — ` : ''}PDF Editor`;
   }
 
   // -------------------------------------------------------------- loading
@@ -352,7 +352,7 @@
     Object.assign(state, {
       sources: [], pageById: new Map(), order: [], annots: [], ocr: {}, rotation: {},
       undo: [], redo: [], selectedId: null, editingId: null, dirty: false,
-      saveHandle: null, keepPassword: null,
+      saveHandle: null,
       textReady: Promise.resolve(),
     });
     updateButtons();
@@ -363,9 +363,17 @@
       const pdfjs = await loadPdfjs();
       const kind = kindOf(file);
       let bytes;
+      let restored = null;
       if (kind === 'pdf') {
         setStatus(`Opening ${file.name}…`);
         bytes = new Uint8Array(await file.arrayBuffer());
+        // Edits saved by this editor come back as editable items.
+        try {
+          restored = await window.PdfEditable.readItems(bytes);
+        } catch (err) {
+          console.warn('Could not read earlier edits', err);
+        }
+        if (restored) bytes = restored.bytes;
       } else {
         setStatus(`Converting ${file.name} to PDF…`);
         setProgress(0);
@@ -375,14 +383,14 @@
           setProgress(null);
         }
       }
-      const task = pdfjs.getDocument({
-        data: bytes.slice(),
+      const docOptions = {
         isEvalSupported: false,
         // Needed for some Asian-language PDFs and PDFs that don't embed their fonts.
         cMapUrl: CDN.pdfjsCmaps,
         cMapPacked: true,
         standardFontDataUrl: CDN.pdfjsFonts,
-      });
+      };
+      const task = pdfjs.getDocument({ data: bytes.slice(), ...docOptions });
       let password = null; // remembered so the file can be unlocked when saving
       task.onPassword = (provide, reason) => {
         const again = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD;
@@ -394,7 +402,25 @@
           provide(pw);
         }
       };
-      const doc = await task.promise;
+      let doc = await task.promise;
+      // A password-protected file saved by this editor: its edits could only
+      // be read once the password was known. Unlock a working copy, take the
+      // edits out as editable items, and show that copy instead. (Saving puts
+      // the same password back.)
+      if (kind === 'pdf' && !restored && password) {
+        try {
+          const found = await window.PdfEditable.readItems(await unlockPdf(bytes, password));
+          if (found) {
+            const plain = await pdfjs.getDocument({ data: found.bytes.slice(), ...docOptions }).promise;
+            doc.destroy();
+            doc = plain;
+            bytes = found.bytes;
+            restored = found;
+          }
+        } catch (err) {
+          console.warn('Could not read earlier edits from the protected file', err);
+        }
+      }
       if (token !== state.loadToken) {
         doc.destroy();
         return 0;
@@ -410,6 +436,7 @@
         state.order.push(page.id);
         newPages.push(page);
       }
+      if (restored) restoreItems(restored.items, newPages);
       layoutPages();
       // Build text layers for every page so the browser's Ctrl+F covers the whole document.
       const prev = state.textReady;
@@ -427,6 +454,24 @@
       alert(`Could not open ${file.name}: ${err.message || err}.`);
       return 0;
     }
+  }
+
+  // Put back edits saved earlier by this editor (see editable.js) as normal,
+  // editable items. If the page has been rotated since (e.g. in another
+  // program), the items are turned to match.
+  function restoreItems(found, newPages) {
+    for (const { index, rot, item } of found) {
+      const page = newPages[index];
+      if (!page) continue;
+      const a = { ...item, id: state.nextId++, page: page.id };
+      const quarters = ((((page.vp.rotation - rot) / 90) % 4) + 4) % 4;
+      if (quarters) {
+        const saved = page.pdfPage.getViewport({ scale: 1, rotation: rot });
+        turnItem(a, saved.width, saved.height, quarters);
+      }
+      state.annots.push(a);
+    }
+    for (const page of newPages) drawAnnots(page);
   }
 
   function createPage(src, srcIndex, pdfPage) {
@@ -666,22 +711,26 @@
   }
 
   // Turn everything added to a page along with the page.
+  // Turn one item on a W×H page clockwise `quarters` times.
+  function turnItem(a, W, H, quarters) {
+    if (a.type === 'ink') {
+      a.points = a.points.map(([x, y]) => turnPoint(x, y, W, H, quarters));
+    } else if (a.type === 'text') {
+      [a.x, a.y] = turnPoint(a.x, a.y, W, H, quarters);
+      a.rot = ((a.rot || 0) + quarters * 90) % 360;
+    } else {
+      const [x1, y1] = turnPoint(a.x, a.y, W, H, quarters);
+      const [x2, y2] = turnPoint(a.x + a.w, a.y + a.h, W, H, quarters);
+      Object.assign(a, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) });
+    }
+  }
+
   function turnPageContent(page, quarters) {
     const W = page.vp.width;
     const H = page.vp.height;
     const deg = quarters * 90;
     for (const a of state.annots) {
-      if (a.page !== page.id) continue;
-      if (a.type === 'ink') {
-        a.points = a.points.map(([x, y]) => turnPoint(x, y, W, H, quarters));
-      } else if (a.type === 'text') {
-        [a.x, a.y] = turnPoint(a.x, a.y, W, H, quarters);
-        a.rot = ((a.rot || 0) + deg) % 360;
-      } else {
-        const [x1, y1] = turnPoint(a.x, a.y, W, H, quarters);
-        const [x2, y2] = turnPoint(a.x + a.w, a.y + a.h, W, H, quarters);
-        Object.assign(a, { x: Math.min(x1, x2), y: Math.min(y1, y2), w: Math.abs(x2 - x1), h: Math.abs(y2 - y1) });
-      }
+      if (a.page === page.id) turnItem(a, W, H, quarters);
     }
     for (const w of state.ocr[page.id] || []) {
       [w.x, w.baseline] = turnPoint(w.x, w.baseline, W, H, quarters);
@@ -1951,57 +2000,15 @@
       const vp = page.vp;
       const rot = vp.rotation;
       const toPdf = (x, y) => vp.convertToPdfPoint(x, y);
-      const rectToPdf = (a) => {
-        const [x1, y1] = toPdf(a.x, a.y);
-        const [x2, y2] = toPdf(a.x + a.w, a.y + a.h);
-        return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) };
-      };
 
       if (words.length) writeInvisibleText(target, font, clean, words, toPdf, rot);
 
-      for (const a of annots) {
-        if (a.type === 'highlight') {
-          target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color), opacity: HIGHLIGHT_OPACITY, blendMode: L.BlendMode.Multiply });
-        } else if (a.type === 'whiteout') {
-          target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color) });
-        } else if (a.type === 'rect') {
-          // On screen the border is drawn inside the box; PDF strokes are
-          // centered on the edge, so inset by half the line width.
-          const r = rectToPdf(a);
-          const half = Math.min(a.width / 2, r.width / 2, r.height / 2);
-          const color = hexToRgb(a.color);
-          target.drawRectangle({
-            x: r.x + half, y: r.y + half, width: r.width - 2 * half, height: r.height - 2 * half,
-            borderColor: color, borderWidth: a.width, color: a.fill ? color : undefined,
-          });
-        } else if (a.type === 'text') {
-          // a.rot: how far the box is turned clockwise on screen (pages rotated after typing).
-          const turn = ((a.rot || 0) * Math.PI) / 180;
-          const lines = a.text.split('\n');
-          lines.forEach((line, k) => {
-            if (!line) return;
-            const dx = TEXT_PADDING;
-            const dy = TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO;
-            const bx = a.x + dx * Math.cos(turn) - dy * Math.sin(turn);
-            const by = a.y + dx * Math.sin(turn) + dy * Math.cos(turn);
-            const [x, y] = toPdf(bx, by);
-            target.drawText(clean(line), { x, y, size: a.size, font, color: hexToRgb(a.color), rotate: L.degrees(rot - (a.rot || 0)) });
-          });
-        } else if (a.type === 'ink') {
-          const color = hexToRgb(a.color);
-          const pts = a.points.map(([x, y]) => toPdf(x, y));
-          if (pts.length === 1) {
-            target.drawCircle({ x: pts[0][0], y: pts[0][1], size: a.width / 2, color });
-          }
-          for (let k = 1; k < pts.length; k++) {
-            target.drawLine({
-              start: { x: pts[k - 1][0], y: pts[k - 1][1] },
-              end: { x: pts[k][0], y: pts[k][1] },
-              thickness: a.width, color, lineCap: L.LineCapStyle.Round,
-            });
-          }
-        }
-      }
+      // Edits are saved as standard PDF annotations that stay editable (editable.js).
+      window.PdfEditable.writeItems(out, target, annots, {
+        vp, font, clean, writeInvisibleText,
+        text: { padding: TEXT_PADDING, lineHeight: TEXT_LINE_HEIGHT, baseline: BASELINE_RATIO },
+        highlightOpacity: HIGHLIGHT_OPACITY,
+      });
     });
 
     return out.save();
@@ -2081,25 +2088,15 @@
         bytes = await buildPdf({ repair: true });
       }
 
-      // If a file needed a password to open, offer to keep that password on
-      // the saved copy (asked once per document). Edit/print restrictions
-      // are not put back.
+      // Like Acrobat, a file that needed a password to open keeps that
+      // password when saved. (Edit/print restrictions are not put back.)
       const used = [...new Set(pages().map((p) => state.sources[p.src]))];
       const withPassword = used.find((src) => src.password);
-      let note = used.some((src) => src.wasProtected) ? ' Its protection was removed so it could be edited.' : '';
+      let note = used.some((src) => src.wasProtected && !src.password) ? ' Its editing restrictions were removed so it could be changed.' : '';
       if (withPassword) {
-        if (state.keepPassword == null) {
-          state.keepPassword = await askConfirm(
-            `${withPassword.name} needed a password to open. Should the saved file need the same password?`,
-            { title: 'Keep the password?', yes: 'Yes, keep password', no: 'No password', danger: false });
-        }
-        if (state.keepPassword) {
-          setStatus('Adding password…');
-          bytes = await lockPdf(bytes, withPassword.password);
-          note = ' It needs the same password to open.';
-        } else {
-          note = ' It opens without a password.';
-        }
+        setStatus('Adding password…');
+        bytes = await lockPdf(bytes, withPassword.password);
+        note = ' It still needs its password to open.';
       }
       for (const src of used) if (src.saveNote) note += ` ${src.saveNote}`;
 

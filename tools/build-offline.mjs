@@ -43,7 +43,7 @@ const VENDOR = [
   '@neslinesli93/qpdf-wasm@0.3.0/dist/qpdf.wasm',
 ];
 
-const SHARED = ['app.js', 'convert.js', 'styles.css'];
+const SHARED = ['app.js', 'convert.js', 'editable.js', 'styles.css'];
 
 function fail(msg) {
   console.error(`build-offline: ${msg}`);
@@ -115,7 +115,7 @@ const stamp = crypto.createHash('sha256');
 for (const f of SHARED) stamp.update(fs.readFileSync(path.join(ROOT, f)));
 const v = stamp.digest('hex').slice(0, 10);
 const rootHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
-  .replace(/(href|src)="(styles\.css|app\.js|convert\.js)(\?v=[\w]+)?"/g, `$1="$2?v=${v}"`);
+  .replace(/(href|src)="(styles\.css|app\.js|convert\.js|editable\.js)(\?v=[\w]+)?"/g, `$1="$2?v=${v}"`);
 fs.writeFileSync(path.join(ROOT, 'index.html'), rootHtml);
 
 // 5b. index.html: local libraries, manifest, install script; drop browser-only bits.

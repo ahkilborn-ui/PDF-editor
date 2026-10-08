@@ -5,11 +5,12 @@
 // app opens and works with no internet connection. A new build has a new
 // VERSION, which makes the browser fetch the new files and drop the old ones.
 
-const VERSION = '872159bebdb5';
+const VERSION = '64e5ec70dac4';
 const FILES = [
   "./",
   "app.js",
   "convert.js",
+  "editable.js",
   "icons/apple-touch-icon.png",
   "icons/favicon-32.png",
   "icons/icon-192.png",

@@ -110,7 +110,9 @@
   // rot?}; toPdf maps (x, baseline) to PDF coordinates, and w/size are in
   // points. `rotation` is the page's display rotation; a word's own `rot` is
   // how far it's turned clockwise on screen (after the page was rotated).
-  function writeInvisibleText(target, font, clean, words, toPdf, rotation = 0) {
+  // With { stream: entries }, the text goes into a separate content stream
+  // whose dictionary gets those entries (so it can be found and removed later).
+  function writeInvisibleText(target, font, clean, words, toPdf, rotation = 0, { stream = null } = {}) {
     const L = PDFLib;
     const fontKey = target.node.newFontDictionary(font.name, font.ref);
     const ops = [L.pushGraphicsState(), L.beginText(), L.setTextRenderingMode(L.TextRenderingMode.Invisible)];
@@ -131,7 +133,12 @@
       );
     }
     ops.push(L.endText(), L.popGraphicsState());
-    target.pushOperators(...ops);
+    if (stream) {
+      const ctx = target.doc.context;
+      target.node.addContentStream(ctx.register(ctx.contentStream(ops, stream)));
+    } else {
+      target.pushOperators(...ops);
+    }
   }
 
   // ------------------------------------------------------------- photos
