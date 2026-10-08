@@ -82,10 +82,33 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 | Draw | <kbd>D</kbd> | Freehand pen. **Line** sets the thickness. |
 
 - **Colors**, **Text size**, **Line** and **Fill** apply to the current tool. If you've selected an item, they change that item. For example, click a highlight in Select mode and then click a color to recolor it.
-- <kbd>Delete</kbd> removes the selected item.
-- <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes and <kbd>Ctrl</kbd>+<kbd>Y</kbd> redoes.
-- <kbd>Ctrl</kbd>+<kbd>S</kbd> saves and <kbd>Ctrl</kbd>+<kbd>O</kbd> opens a file.
-- Use **−**, **+** and **Fit** to zoom.
+
+### Keyboard shortcuts
+
+On a Mac, use <kbd>⌘</kbd> wherever this says <kbd>Ctrl</kbd>.
+
+| Keys | What it does |
+|---|---|
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save. In Chrome and Edge, the first save asks where to put the file, and later saves update that same file. Other browsers download a copy each time. Works even while you're typing in a text box. |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save As: save to a different file. |
+| <kbd>Ctrl</kbd>+<kbd>O</kbd> | Open files |
+| <kbd>Ctrl</kbd>+<kbd>P</kbd> | Print the edited PDF, not the editor screen |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> | Undo |
+| <kbd>Ctrl</kbd>+<kbd>Y</kbd> or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> | Redo |
+| <kbd>Ctrl</kbd>+<kbd>F</kbd> | Find words, using the browser's own search |
+| <kbd>Ctrl</kbd>+<kbd>A</kbd> | Select all the document's text |
+| <kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd> | Copy, cut and paste text, or the item you selected (a highlight, text box, rectangle or drawing). Pasting text copied from somewhere else adds it as a text box. |
+| <kbd>Ctrl</kbd>+<kbd>D</kbd> | Duplicate the selected item |
+| <kbd>Delete</kbd> / <kbd>Backspace</kbd> | Delete the selected item |
+| Arrow keys | Move the selected item. Hold <kbd>Shift</kbd> to move it 10 times further. With nothing selected, the arrow keys scroll. |
+| <kbd>Enter</kbd> | Edit the selected text box |
+| <kbd>Esc</kbd> | Finish typing, clear the selection, close the page viewer, or cancel a popup box |
+| <kbd>Page Up</kbd> / <kbd>Page Down</kbd>, <kbd>Space</kbd>, <kbd>Home</kbd> / <kbd>End</kbd> | Scroll through the document |
+| <kbd>Ctrl</kbd>+<kbd>+</kbd> / <kbd>Ctrl</kbd>+<kbd>−</kbd> / <kbd>Ctrl</kbd>+<kbd>0</kbd> | Zoom in, zoom out, back to 100% |
+| <kbd>Ctrl</kbd>+scroll wheel, or pinching on a trackpad | Zoom |
+| <kbd>V</kbd> <kbd>T</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>R</kbd> <kbd>D</kbd> | Switch to the Select, Text, Highlight, White-out, Rectangle or Draw tool |
+
+The tab title shows a **•** when there are unsaved changes.
 
 ### Merging, deleting and reordering pages
 

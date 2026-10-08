@@ -190,6 +190,8 @@ kbd {
   width: min-content;
 }
 .page-bar {
+  /* Labels and buttons, not document text: keep them out of selections and copies. */
+  user-select: none;
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
@@ -263,6 +265,18 @@ body.multi-source .page-src { display: inline; }
   width: 0;
   height: 0;
   display: none;
+}
+
+/* Holds the PDF while it's being printed (Ctrl+P); not shown. */
+.print-frame {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  height: 1px;
+  border: 0;
+  opacity: 0;
+  pointer-events: none;
 }
 
 /* Text found by OCR, shown the same way (invisible but selectable/findable). */

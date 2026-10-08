@@ -235,6 +235,9 @@
     ui.redoBtn.disabled = !state.redo.length;
     ui.deleteBtn.disabled = state.selectedId == null;
     ui.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
+    // A dot in the tab title while there are unsaved changes.
+    const name = state.saveHandle?.name || state.sources[0]?.name;
+    document.title = `${state.dirty ? '• ' : ''}${name ? `${name} — ` : ''}PDF Editor`;
   }
 
   // -------------------------------------------------------------- loading
@@ -280,8 +283,6 @@
     } else if (files.length > 1) {
       state.dirty = true;
     }
-    const first = state.sources[0];
-    document.title = `${first ? first.name : 'PDF'} — PDF Editor`;
     const n = state.order.length;
     const merged = state.sources.length > 1 ? ` (merged from ${state.sources.length} files)` : '';
     setStatus(`${n} page${n === 1 ? '' : 's'}${merged}.` +
@@ -299,6 +300,7 @@
     Object.assign(state, {
       sources: [], pageById: new Map(), order: [], annots: [], ocr: {}, rotation: {},
       undo: [], redo: [], selectedId: null, editingId: null, dirty: false,
+      saveHandle: null, keepPassword: null,
       textReady: Promise.resolve(),
     });
     updateButtons();
@@ -1199,7 +1201,9 @@
         e.preventDefault();
         el.blur();
       }
-      e.stopPropagation();
+      // Typing stays in the box, but Save / Open / Print still work.
+      const appShortcut = (e.ctrlKey || e.metaKey) && !e.altKey && ['s', 'o', 'p'].includes(e.key.toLowerCase());
+      if (!appShortcut) e.stopPropagation();
     });
   }
 
@@ -1630,7 +1634,7 @@
       state.dirty = true;
       const total = targets.reduce((n, p) => n + (state.ocr[p.id]?.length || 0), 0);
       setStatus(`OCR finished: found ${total} words on ${targets.length} page${targets.length === 1 ? '' : 's'}. ` +
-        'Click Save to download a searchable PDF.');
+        'Click Save (Ctrl+S) to keep the searchable PDF.');
     } catch (err) {
       console.error(err);
       if (done) {
@@ -1792,97 +1796,128 @@
     return out;
   }
 
-  async function save() {
+  // Build the edited PDF (pages in order, rotations, edits, OCR text) as bytes.
+  async function buildPdf() {
+    const L = PDFLib;
+    const out = await assemblePages();
+    const font = await out.embedFont(L.StandardFonts.Helvetica);
+    const clean = makeSanitizer(font);
+    const outPages = out.getPages();
+
+    pages().forEach((page, i) => {
+      const target = outPages[i];
+      target.setRotation(L.degrees(page.vp.rotation));
+      const annots = state.annots.filter((a) => a.page === page.id);
+      const words = state.ocr[page.id] || [];
+      if (!annots.length && !words.length) return;
+      // Wrap the existing content in q/Q so its graphics state can't skew our additions.
+      target.translateContent(0, 0);
+      const vp = page.vp;
+      const rot = vp.rotation;
+      const toPdf = (x, y) => vp.convertToPdfPoint(x, y);
+      const rectToPdf = (a) => {
+        const [x1, y1] = toPdf(a.x, a.y);
+        const [x2, y2] = toPdf(a.x + a.w, a.y + a.h);
+        return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) };
+      };
+
+      if (words.length) writeInvisibleText(target, font, clean, words, toPdf, rot);
+
+      for (const a of annots) {
+        if (a.type === 'highlight') {
+          target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color), opacity: HIGHLIGHT_OPACITY, blendMode: L.BlendMode.Multiply });
+        } else if (a.type === 'whiteout') {
+          target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color) });
+        } else if (a.type === 'rect') {
+          // On screen the border is drawn inside the box; PDF strokes are
+          // centered on the edge, so inset by half the line width.
+          const r = rectToPdf(a);
+          const half = Math.min(a.width / 2, r.width / 2, r.height / 2);
+          const color = hexToRgb(a.color);
+          target.drawRectangle({
+            x: r.x + half, y: r.y + half, width: r.width - 2 * half, height: r.height - 2 * half,
+            borderColor: color, borderWidth: a.width, color: a.fill ? color : undefined,
+          });
+        } else if (a.type === 'text') {
+          // a.rot: how far the box is turned clockwise on screen (pages rotated after typing).
+          const turn = ((a.rot || 0) * Math.PI) / 180;
+          const lines = a.text.split('\n');
+          lines.forEach((line, k) => {
+            if (!line) return;
+            const dx = TEXT_PADDING;
+            const dy = TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO;
+            const bx = a.x + dx * Math.cos(turn) - dy * Math.sin(turn);
+            const by = a.y + dx * Math.sin(turn) + dy * Math.cos(turn);
+            const [x, y] = toPdf(bx, by);
+            target.drawText(clean(line), { x, y, size: a.size, font, color: hexToRgb(a.color), rotate: L.degrees(rot - (a.rot || 0)) });
+          });
+        } else if (a.type === 'ink') {
+          const color = hexToRgb(a.color);
+          const pts = a.points.map(([x, y]) => toPdf(x, y));
+          if (pts.length === 1) {
+            target.drawCircle({ x: pts[0][0], y: pts[0][1], size: a.width / 2, color });
+          }
+          for (let k = 1; k < pts.length; k++) {
+            target.drawLine({
+              start: { x: pts[k - 1][0], y: pts[k - 1][1] },
+              end: { x: pts[k][0], y: pts[k][1] },
+              thickness: a.width, color, lineCap: L.LineCapStyle.Round,
+            });
+          }
+        }
+      }
+    });
+
+    return out.save();
+  }
+
+  const canPickSaveFile = typeof window.showSaveFilePicker === 'function';
+
+  // Save the document. In Chrome and Edge the first save asks where to put
+  // the file, and later saves (Ctrl+S) update that same file; Save As
+  // (Ctrl+Shift+S) asks again. Other browsers download a copy each time.
+  async function save({ saveAs = false } = {}) {
     if (!state.order.length || state.busy) return;
     finishEditing();
-    const L = PDFLib;
+
+    // Ask for the location first, while the click / key press still counts
+    // as the user's action (browsers require that for the save dialog).
+    let handle = saveAs ? null : state.saveHandle;
+    if (canPickSaveFile && !handle) {
+      try {
+        handle = await window.showSaveFilePicker({
+          suggestedName: outputName(),
+          types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }],
+        });
+      } catch (err) {
+        if (err.name === 'AbortError') {
+          setStatus('Save cancelled.');
+          return;
+        }
+        console.warn('Save dialog unavailable, downloading instead:', err);
+        handle = null;
+      }
+    }
+
     state.busy = true;
     updateButtons();
     setStatus('Saving…');
     try {
-      const out = await assemblePages();
-      const font = await out.embedFont(L.StandardFonts.Helvetica);
-      const clean = makeSanitizer(font);
-      const outPages = out.getPages();
-
-      pages().forEach((page, i) => {
-        const target = outPages[i];
-        target.setRotation(L.degrees(page.vp.rotation));
-        const annots = state.annots.filter((a) => a.page === page.id);
-        const words = state.ocr[page.id] || [];
-        if (!annots.length && !words.length) return;
-        // Wrap the existing content in q/Q so its graphics state can't skew our additions.
-        target.translateContent(0, 0);
-        const vp = page.vp;
-        const rot = vp.rotation;
-        const toPdf = (x, y) => vp.convertToPdfPoint(x, y);
-        const rectToPdf = (a) => {
-          const [x1, y1] = toPdf(a.x, a.y);
-          const [x2, y2] = toPdf(a.x + a.w, a.y + a.h);
-          return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) };
-        };
-
-        if (words.length) writeInvisibleText(target, font, clean, words, toPdf, rot);
-
-        for (const a of annots) {
-          if (a.type === 'highlight') {
-            target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color), opacity: HIGHLIGHT_OPACITY, blendMode: L.BlendMode.Multiply });
-          } else if (a.type === 'whiteout') {
-            target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color) });
-          } else if (a.type === 'rect') {
-            // On screen the border is drawn inside the box; PDF strokes are
-            // centered on the edge, so inset by half the line width.
-            const r = rectToPdf(a);
-            const half = Math.min(a.width / 2, r.width / 2, r.height / 2);
-            const color = hexToRgb(a.color);
-            target.drawRectangle({
-              x: r.x + half, y: r.y + half, width: r.width - 2 * half, height: r.height - 2 * half,
-              borderColor: color, borderWidth: a.width, color: a.fill ? color : undefined,
-            });
-          } else if (a.type === 'text') {
-            // a.rot: how far the box is turned clockwise on screen (pages rotated after typing).
-            const turn = ((a.rot || 0) * Math.PI) / 180;
-            const lines = a.text.split('\n');
-            lines.forEach((line, k) => {
-              if (!line) return;
-              const dx = TEXT_PADDING;
-              const dy = TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO;
-              const bx = a.x + dx * Math.cos(turn) - dy * Math.sin(turn);
-              const by = a.y + dx * Math.sin(turn) + dy * Math.cos(turn);
-              const [x, y] = toPdf(bx, by);
-              target.drawText(clean(line), { x, y, size: a.size, font, color: hexToRgb(a.color), rotate: L.degrees(rot - (a.rot || 0)) });
-            });
-          } else if (a.type === 'ink') {
-            const color = hexToRgb(a.color);
-            const pts = a.points.map(([x, y]) => toPdf(x, y));
-            if (pts.length === 1) {
-              target.drawCircle({ x: pts[0][0], y: pts[0][1], size: a.width / 2, color });
-            }
-            for (let k = 1; k < pts.length; k++) {
-              target.drawLine({
-                start: { x: pts[k - 1][0], y: pts[k - 1][1] },
-                end: { x: pts[k][0], y: pts[k][1] },
-                thickness: a.width, color, lineCap: L.LineCapStyle.Round,
-              });
-            }
-          }
-        }
-      });
-
-      let bytes = await out.save();
-      const name = outputName();
+      let bytes = await buildPdf();
 
       // If a file needed a password to open, offer to keep that password on
-      // the saved copy. (Edit/print restrictions are not put back.)
+      // the saved copy (asked once per document). Edit/print restrictions
+      // are not put back.
       const used = [...new Set(pages().map((p) => state.sources[p.src]))];
       const withPassword = used.find((src) => src.password);
       let note = used.some((src) => src.wasProtected) ? ' Its protection was removed so it could be edited.' : '';
       if (withPassword) {
-        setStatus('Saving…');
-        const keep = await askConfirm(
-          `${withPassword.name} needed a password to open. Should the saved file need the same password?`,
-          { title: 'Keep the password?', yes: 'Yes, keep password', no: 'No password', danger: false });
-        if (keep) {
+        if (state.keepPassword == null) {
+          state.keepPassword = await askConfirm(
+            `${withPassword.name} needed a password to open. Should the saved file need the same password?`,
+            { title: 'Keep the password?', yes: 'Yes, keep password', no: 'No password', danger: false });
+        }
+        if (state.keepPassword) {
           setStatus('Adding password…');
           bytes = await lockPdf(bytes, withPassword.password);
           note = ' It needs the same password to open.';
@@ -1891,13 +1926,66 @@
         }
       }
 
-      download(bytes, name);
+      let name = outputName();
+      if (handle) {
+        try {
+          const writable = await handle.createWritable();
+          await writable.write(bytes);
+          await writable.close();
+        } catch (err) {
+          throw new Error(`couldn't write to ${handle.name}. If it's open in another program, close it there and try again, or use Save As (Ctrl+Shift+S). (${err.message})`);
+        }
+        state.saveHandle = handle;
+        name = handle.name;
+        note += ' Ctrl+S saves to this file again.';
+      } else {
+        download(bytes, name);
+      }
       state.dirty = false;
       setStatus(`Saved ${name}.${note}`);
     } catch (err) {
       console.error(err);
       setStatus(`Save failed: ${err.message || err}`);
       alert(`Save failed: ${err.message || err}`);
+    } finally {
+      state.busy = false;
+      updateButtons();
+    }
+  }
+
+  // Print the edited PDF itself (not the editor screen) using the browser's
+  // PDF viewer in a hidden frame.
+  async function printPdf() {
+    if (!state.order.length || state.busy) return;
+    finishEditing();
+    state.busy = true;
+    updateButtons();
+    setStatus('Preparing to print…');
+    try {
+      const url = URL.createObjectURL(new Blob([await buildPdf()], { type: 'application/pdf' }));
+      const frame = document.createElement('iframe');
+      frame.className = 'print-frame';
+      frame.title = 'Print preview';
+      frame.src = url;
+      frame.addEventListener('load', () => {
+        setTimeout(() => {
+          try {
+            frame.contentWindow.focus();
+            frame.contentWindow.print();
+          } catch {
+            window.open(url); // the browser blocks printing from the frame: open the PDF to print it there
+          }
+          setStatus('Print dialog opened.');
+        }, 250);
+      }, { once: true });
+      document.body.append(frame);
+      setTimeout(() => {
+        frame.remove();
+        URL.revokeObjectURL(url);
+      }, 10 * 60 * 1000);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Couldn't print: ${err.message || err}`);
     } finally {
       state.busy = false;
       updateButtons();
@@ -1934,7 +2022,7 @@
     openFiles(ui.addInput.files, true);
     ui.addInput.value = '';
   });
-  ui.saveBtn.addEventListener('click', save);
+  ui.saveBtn.addEventListener('click', (e) => save({ saveAs: e.shiftKey }));
   ui.ocrBtn.addEventListener('click', runOcr);
   ui.undoBtn.addEventListener('click', undo);
   ui.redoBtn.addEventListener('click', redo);
@@ -1959,46 +2047,211 @@
   const TOOL_KEYS = { v: 'select', t: 'text', h: 'highlight', w: 'whiteout', r: 'rect', d: 'draw' };
 
   document.addEventListener('keydown', (e) => {
+    const mod = e.ctrlKey || e.metaKey; // Ctrl on Windows, ⌘ on Mac
+    const key = e.key.toLowerCase();
+
+    // Save / Save As / Open / Print work everywhere, even while typing in a
+    // text box, and never fall through to the browser's own versions.
+    if (mod && !e.altKey && (key === 's' || key === 'o' || key === 'p')) {
+      e.preventDefault();
+      if (document.querySelector('dialog[open]') || state.busy) return;
+      if (key === 's') save({ saveAs: e.shiftKey });
+      else if (key === 'o') ui.fileInput.click();
+      else printPdf();
+      return;
+    }
     if (state.editingId != null) return;
     if (document.querySelector('dialog[open]')) return; // dialogs handle their own keys
+
     const inField = e.target.matches('input, select, textarea, [contenteditable]');
     // Fields you type into keep their own Ctrl+Z (undo typing); anywhere
     // else — including check boxes, color pickers and drop-downs — Ctrl+Z
     // undoes the last change to the document.
     const typingField = e.target.matches('textarea, [contenteditable], ' +
       'input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not([type="file"]):not([type="button"]):not([type="submit"])');
-    const mod = e.ctrlKey || e.metaKey;
-    const key = e.key.toLowerCase();
-    if (mod && key === 's') {
-      e.preventDefault();
-      save();
-    } else if (mod && key === 'o') {
-      e.preventDefault();
-      ui.fileInput.click();
-    } else if (mod && !e.altKey && (key === 'z' || key === 'y') && !typingField) {
+    const selected = getAnnot(state.selectedId);
+
+    if (mod && !e.altKey && (key === 'z' || key === 'y') && !typingField) {
       e.preventDefault();
       if (key === 'y' || e.shiftKey) redo();
       else undo();
     } else if (inField) {
       return;
-    } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId != null) {
+    } else if (mod && (key === '=' || key === '+')) {
+      e.preventDefault();
+      zoomStep(1);
+    } else if (mod && (key === '-' || key === '_')) {
+      e.preventDefault();
+      zoomStep(-1);
+    } else if (mod && key === '0') {
+      e.preventDefault();
+      setZoom(1);
+    } else if (mod && key === 'a') {
+      // Select all the document's text (not the toolbar's).
+      e.preventDefault();
+      const range = document.createRange();
+      range.selectNodeContents(ui.pages);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } else if (mod && key === 'd' && selected) {
+      e.preventDefault();
+      pasteAnnot(JSON.parse(JSON.stringify(selected)), selected.page);
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
       e.preventDefault();
       deleteSelected();
+    } else if (e.key === 'Enter' && selected?.type === 'text') {
+      e.preventDefault();
+      startEditing(selected.id);
+    } else if (e.key.startsWith('Arrow') && selected && !mod) {
+      e.preventDefault();
+      nudgeSelected(e.key, e.shiftKey ? 10 : 1);
     } else if (e.key === 'Escape' && panel.open) {
       togglePanel(false);
     } else if (e.key === 'Escape') {
+      window.getSelection()?.removeAllRanges();
       select(null);
       setTool('select');
     } else if (!mod && !e.altKey && TOOL_KEYS[key]) {
       setTool(TOOL_KEYS[key]);
-    } else if (mod && (key === '=' || key === '+')) {
+    } else if (!mod && scrollViewerForKey(e)) {
       e.preventDefault();
-      zoomStep(1);
-    } else if (mod && key === '-') {
-      e.preventDefault();
-      zoomStep(-1);
     }
   });
+
+  // Page Up/Down, Space, Home/End and the arrow keys scroll the document
+  // (focus usually sits on the page itself, which doesn't scroll).
+  function scrollViewerForKey(e) {
+    if (!state.order.length) return false;
+    if (e.target !== document.body && !ui.viewer.contains(e.target)) return false; // e.g. Space on a button
+    const v = ui.viewer;
+    const page = v.clientHeight * 0.9;
+    const moves = {
+      ArrowDown: [0, 40], ArrowUp: [0, -40], ArrowRight: [40, 0], ArrowLeft: [-40, 0],
+      PageDown: [0, page], PageUp: [0, -page], ' ': [0, e.shiftKey ? -page : page],
+    };
+    if (e.key === 'Home') v.scrollTo({ top: 0 });
+    else if (e.key === 'End') v.scrollTo({ top: v.scrollHeight });
+    else if (moves[e.key]) v.scrollBy(moves[e.key][0], moves[e.key][1]);
+    else return false;
+    return true;
+  }
+
+  // Arrow keys move the selected item; a burst of presses is one undo step.
+  let lastNudge = { id: null, time: 0 };
+  function nudgeSelected(key, step) {
+    const a = getAnnot(state.selectedId);
+    if (!a) return;
+    const now = Date.now();
+    if (lastNudge.id !== a.id || now - lastNudge.time > 1000) checkpoint();
+    lastNudge = { id: a.id, time: now };
+    const dx = key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0;
+    const dy = key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0;
+    moveAnnot(a, JSON.parse(JSON.stringify(a)), dx, dy);
+    refreshAnnot(a);
+  }
+
+  // --- copy, cut and paste of added items (Ctrl+C / Ctrl+X / Ctrl+V)
+  //
+  // Selected text copies as usual. With an item selected (and no text
+  // selected), the item itself is copied. Pasting plain text from elsewhere
+  // creates a text box.
+
+  const CLIP_TYPE = 'application/x-pdf-editor-item';
+  let clipboardItem = null;
+
+  function textIsSelected() {
+    const sel = window.getSelection();
+    return sel && !sel.isCollapsed;
+  }
+
+  function copySelectedItem(e) {
+    const a = getAnnot(state.selectedId);
+    if (!a || state.editingId != null || textIsSelected() || e.target.matches?.('input, textarea, [contenteditable]')) return false;
+    clipboardItem = JSON.parse(JSON.stringify(a));
+    e.preventDefault();
+    e.clipboardData.setData(CLIP_TYPE, JSON.stringify(clipboardItem));
+    e.clipboardData.setData('text/plain', a.type === 'text' ? a.text : '');
+    return true;
+  }
+
+  document.addEventListener('copy', (e) => {
+    if (copySelectedItem(e)) setStatus('Copied. Press Ctrl+V to paste.');
+  });
+  document.addEventListener('cut', (e) => {
+    if (copySelectedItem(e)) {
+      deleteSelected();
+      setStatus('Cut. Press Ctrl+V to paste.');
+    }
+  });
+  document.addEventListener('paste', (e) => {
+    if (!state.order.length || state.editingId != null || document.querySelector('dialog[open]')) return;
+    if (e.target.matches?.('input, textarea, [contenteditable]')) return;
+    const data = e.clipboardData;
+    let item = null;
+    try {
+      item = data.getData(CLIP_TYPE) ? JSON.parse(data.getData(CLIP_TYPE)) : null;
+    } catch {
+      item = null;
+    }
+    const text = data.getData('text/plain');
+    if (!item && clipboardItem && (text === (clipboardItem.text || '') || !text)) item = clipboardItem;
+    if (item) {
+      e.preventDefault();
+      pasteAnnot(item, visiblePage().id);
+    } else if (text.trim()) {
+      e.preventDefault();
+      const page = visiblePage();
+      const r = page.el.getBoundingClientRect();
+      const vr = ui.viewer.getBoundingClientRect();
+      const y = Math.max(20, (Math.max(r.top, vr.top) - r.top) / state.zoom + 40);
+      const a = addAnnot({ page: page.id, type: 'text', text: text.replace(/\r\n?/g, '\n'), x: 40, y, size: state.fontSize, color: state.colors.text });
+      select(a.id);
+      setStatus('Pasted text as a text box. Drag it where you want it.');
+    }
+  });
+
+  // The page filling most of the view.
+  function visiblePage() {
+    const vr = ui.viewer.getBoundingClientRect();
+    let best = pages()[0];
+    let bestArea = -1;
+    for (const p of pages()) {
+      const r = p.el.getBoundingClientRect();
+      const h = Math.min(r.bottom, vr.bottom) - Math.max(r.top, vr.top);
+      if (h > bestArea) {
+        best = p;
+        bestArea = h;
+      }
+    }
+    return best;
+  }
+
+  // Add a copy of an item to a page, a little offset so it's easy to see.
+  function pasteAnnot(item, pageId) {
+    const page = state.pageById.get(pageId) || visiblePage();
+    const copy = JSON.parse(JSON.stringify(item));
+    delete copy.id;
+    delete copy.isNew;
+    const offset = 12;
+    moveAnnot(copy, JSON.parse(JSON.stringify(copy)), offset, offset);
+    copy.page = page.id;
+    const a = addAnnot(copy);
+    select(a.id);
+    setStatus('Pasted.');
+  }
+
+  // Ctrl + mouse wheel (or a trackpad pinch) zooms the document.
+  let wheelZoom = null;
+  ui.viewer.addEventListener('wheel', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || !state.order.length) return;
+    e.preventDefault();
+    wheelZoom = (wheelZoom ?? state.zoom) * Math.exp(-e.deltaY * 0.0025);
+    requestAnimationFrame(() => {
+      if (wheelZoom != null) setZoom(wheelZoom);
+      wheelZoom = null;
+    });
+  }, { passive: false });
 
   window.addEventListener('beforeunload', (e) => {
     if (state.dirty) {
@@ -2018,7 +2271,7 @@
   }
 
   // Exposed for automated tests / debugging in the console.
-  window.pdfEditor = { state, panel, openFiles, save, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel };
+  window.pdfEditor = { state, panel, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel };
 
   showColor(state.colors[state.tool]);
   updateHighlightPreview();
