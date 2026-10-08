@@ -133,6 +133,9 @@ body {
   display: flex;
   flex: 1;
   min-height: 0;
+  /* Keep the closed page viewer (parked just off the right edge) from
+     making the whole window scroll sideways. */
+  overflow: hidden;
 }
 
 #viewer {
