@@ -243,10 +243,14 @@
   // -------------------------------------------------------------- loading
 
   // Open replaces the current document; append (merge) adds pages to the end.
+  // Items are Files, or { file, handle } when the browser also gave us a
+  // handle to the file on disk (Chrome / Edge) — that's what lets Save write
+  // the changes back into the file that was opened.
   async function openFiles(fileList, append = false) {
-    const all = [...fileList];
-    const files = all.filter((f) => kindOf(f));
-    const skipped = all.filter((f) => !kindOf(f));
+    const entries = [...fileList].map((x) => (x instanceof Blob ? { file: x, handle: null } : x));
+    const usable = entries.filter((x) => kindOf(x.file));
+    const files = usable.map((x) => x.file);
+    const skipped = entries.filter((x) => !kindOf(x.file)).map((x) => x.file);
     if (skipped.length) {
       alert(`These files can't be opened: ${skipped.map((f) => f.name).join(', ')}\n\n` +
         'Supported: PDF, photos (JPG, PNG, iPhone HEIC…) and Word .docx files.');
@@ -284,11 +288,58 @@
     } else if (files.length > 1) {
       state.dirty = true;
     }
+    // Opened a PDF we can write back to: Save updates that file.
+    const first = usable[0];
+    if (!append && first?.handle && kindOf(first.file) === 'pdf' && state.sources[0]?.name === first.file.name) {
+      state.saveHandle = first.handle;
+    }
     const n = state.order.length;
     const merged = state.sources.length > 1 ? ` (merged from ${state.sources.length} files)` : '';
     setStatus(`${n} page${n === 1 ? '' : 's'}${merged}.` +
-      (append && added ? ` Added ${added} page${added === 1 ? '' : 's'} at the end.` : ''));
+      (append && added ? ` Added ${added} page${added === 1 ? '' : 's'} at the end.` : '') +
+      (state.saveHandle ? ` Ctrl+S saves your changes to ${state.saveHandle.name}.` : ''));
     updateButtons();
+  }
+
+  const canPickOpenFile = typeof window.showOpenFilePicker === 'function';
+
+  // Open (or add) files. In Chrome and Edge this uses the file picker that
+  // keeps a link to the file on disk, so changes can be saved back into it;
+  // other browsers use the standard file input.
+  async function chooseFiles(append = false) {
+    const input = append ? ui.addInput : ui.fileInput;
+    if (!canPickOpenFile) {
+      input.click();
+      return;
+    }
+    let handles;
+    try {
+      handles = await window.showOpenFilePicker({
+        multiple: true,
+        types: [{
+          description: 'PDFs, photos and Word files',
+          accept: {
+            'application/pdf': ['.pdf'],
+            'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic', '.heif', '.avif'],
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+            'application/msword': ['.doc'],
+          },
+        }],
+      });
+    } catch (err) {
+      if (err.name !== 'AbortError') input.click(); // picker unavailable here: use the standard one
+      return;
+    }
+    const items = await Promise.all(handles.map(async (handle) => ({ file: await handle.getFile(), handle })));
+    openFiles(items, append);
+  }
+
+  for (const [input, append] of [[ui.fileInput, false], [ui.addInput, true]]) {
+    input.closest('label').addEventListener('click', (e) => {
+      if (!canPickOpenFile || e.target === input) return;
+      e.preventDefault();
+      chooseFiles(append);
+    });
   }
 
   function resetDocument() {
@@ -2057,7 +2108,6 @@
           await writeToFile(handle, bytes);
           state.saveHandle = handle;
           name = handle.name;
-          note += ' Ctrl+S saves to this file again.';
         } catch (err) {
           // The chosen file can't be written (e.g. it's open in another
           // program). Don't lose the work: save a copy to Downloads instead.
@@ -2072,7 +2122,7 @@
         note += ' It is in your Downloads folder.';
       }
       state.dirty = false;
-      setStatus(`Saved ${name}.${note}`);
+      setStatus(`${handle && !savedToDownloadsInstead ? 'Saved changes to' : 'Saved'} ${name}.${note}`);
     } catch (err) {
       console.error(err);
       failure = err;
@@ -2230,7 +2280,14 @@
   ui.viewer.addEventListener('drop', (e) => {
     e.preventDefault();
     ui.viewer.classList.remove('dragover');
-    openFiles(e.dataTransfer.files, true);
+    const files = [...e.dataTransfer.files];
+    // Ask for handles to the dropped files right away (only possible during
+    // the drop event), so a dropped PDF can be saved back into too.
+    const items = [...e.dataTransfer.items].filter((item) => item.kind === 'file');
+    const handles = items.map((item) => (item.getAsFileSystemHandle ? item.getAsFileSystemHandle().catch(() => null) : null));
+    Promise.all(handles).then((list) => {
+      openFiles(files.map((file, i) => ({ file, handle: list[i]?.kind === 'file' ? list[i] : null })), true);
+    });
   });
 
   const TOOL_KEYS = { v: 'select', t: 'text', h: 'highlight', w: 'whiteout', r: 'rect', d: 'draw' };
@@ -2246,7 +2303,7 @@
       if (document.querySelector('dialog[open]')) return;
       if (key === 's') save({ saveAs: e.shiftKey }); // explains itself if it can't save now
       else if (state.busy) return;
-      else if (key === 'o') ui.fileInput.click();
+      else if (key === 'o') chooseFiles(false);
       else printPdf();
       return;
     }
@@ -2455,8 +2512,8 @@
   if ('launchQueue' in window) {
     window.launchQueue.setConsumer(async (params) => {
       if (!params.files?.length) return;
-      const files = await Promise.all(params.files.map((handle) => handle.getFile()));
-      openFiles(files, false);
+      const items = await Promise.all(params.files.map(async (handle) => ({ file: await handle.getFile(), handle })));
+      openFiles(items, false);
     });
   }
 

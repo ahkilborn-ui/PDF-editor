@@ -68,7 +68,7 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 
 1. Click **Open** (or drag files onto the window). You can open PDFs, photos or Word `.docx` files. To merge, select several files at once, or click **Add files** afterward.
 2. Pick a tool and edit.
-3. Click **Save**. You get a new file named `yourfile-edited.pdf`, `yourfile-merged.pdf` if you merged files, or just `yourfile.pdf` if you converted a single photo or Word file without changing it. The file goes to your Downloads folder, and the originals aren't changed.
+3. Click **Save** (or press <kbd>Ctrl</kbd>+<kbd>S</kbd>). In Chrome and Edge, your changes are saved into the PDF you opened, just like in Word or Acrobat. The first time, Chrome asks **"Allow this site to save changes to *file.pdf*?"**, so click **Allow**. To keep the original untouched, use **Save As** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>) and save a separate copy. Photos and Word files ask where to save the new PDF. In Safari and Firefox, which can't save over a file, each save downloads a new copy to your Downloads folder.
 
 ### Tools and shortcuts
 
@@ -89,7 +89,7 @@ On a Mac, use <kbd>⌘</kbd> wherever this says <kbd>Ctrl</kbd>.
 
 | Keys | What it does |
 |---|---|
-| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save. In Chrome and Edge, the first save asks where to put the file, and later saves update that same file. Other browsers download a copy each time. Works even while you're typing in a text box. |
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save your changes into the PDF you opened (Chrome and Edge; other browsers download a copy). Works even while you're typing in a text box. |
 | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd> | Save As: save to a different file. |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Open files |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | Print the edited PDF, not the editor screen |
@@ -161,7 +161,7 @@ In the browser version, the first run downloads the English language data (about
 
 - **White-out is not redaction.** It hides content visually, but the original text is still in the file and can be found with search or copy and paste. Don't use it to remove sensitive information.
 - Bookmarks and fillable form fields are kept when you only delete pages or add files to the end. If you reorder the original pages, or put another file's pages before them, the saved PDF is rebuilt from its pages and those are lost.
-- Your edits become part of the page when you save, so reopening the saved file doesn't let you move or edit them again. Keep the original file if you might want to change them later.
+- Your edits become part of the page when you save, so reopening the saved file doesn't let you move or edit them again. Because Save writes into the file you opened, use **Save As** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>) instead if you want to keep an unedited original.
 - Typed text uses Helvetica, which only covers Latin characters. Other characters are saved as `?`.
 - OCR is English only.
 - Converted Word pages are stored as high-resolution pictures with the real text invisibly on top. That makes them look right and searchable, but the text isn't perfectly sharp when you zoom far in. Fonts that aren't on your computer, such as Calibri on a Mac, are replaced with similar ones, so line breaks can differ slightly from Word. For an exact copy, use **File → Save as PDF** in Word, or **File → Download → PDF** in Google Docs.
