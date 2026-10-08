@@ -1231,12 +1231,22 @@
 
   const DRAG_RECT_TOOLS = new Set(['highlight', 'whiteout', 'rect']);
 
+  // Pointer handling for one page. Listeners sit on the page element: most
+  // tools get events through the annotation layer on top, while in Highlight
+  // mode that layer lets events through so the text underneath can be
+  // selected letter by letter.
   function attachPageEvents(page) {
     const layer = page.annotLayer;
+    const host = page.el;
     let drag = null;
 
-    layer.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0) return;
+    // Highlight tool pressed on text: let the browser select it; the
+    // selection becomes the highlight when the mouse is released.
+    const onText = (e) => state.tool === 'highlight' && e.target.closest('.textLayer span, .ocrLayer span');
+
+    host.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 || onText(e)) return;
+      if (state.tool === 'select' && !e.target.closest('.annot')) return;
       const target = e.target.closest('.annot');
       const id = target ? Number(target.dataset.id) : null;
       if (id != null && id === state.editingId) return; // clicks inside the box being edited
@@ -1293,10 +1303,10 @@
         layer.append(svg);
         drag = { kind: 'ink', points: [[round(pt.x), round(pt.y)]], svg, line };
       }
-      if (drag) layer.setPointerCapture(e.pointerId);
+      if (drag) host.setPointerCapture(e.pointerId);
     });
 
-    layer.addEventListener('pointermove', (e) => {
+    host.addEventListener('pointermove', (e) => {
       if (!drag) return;
       const pt = pointInPage(page, e);
       if (drag.kind === 'move') {
@@ -1325,7 +1335,7 @@
       if (!drag) return;
       const d = drag;
       drag = null;
-      if (layer.hasPointerCapture(e.pointerId)) layer.releasePointerCapture(e.pointerId);
+      if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
       if (d.kind === 'rect') {
         d.el.remove();
         const r = normRect(d.start, d.cur);
@@ -1341,12 +1351,14 @@
         }
       }
     };
-    layer.addEventListener('pointerup', end);
-    layer.addEventListener('pointercancel', end);
+    host.addEventListener('pointerup', end);
+    host.addEventListener('pointercancel', end);
 
     // Stop the browser from moving focus / starting a text selection when we
     // handle the press ourselves (otherwise a new text box would lose focus).
-    layer.addEventListener('mousedown', (e) => {
+    host.addEventListener('mousedown', (e) => {
+      if (onText(e)) return;
+      if (state.tool === 'select' && !e.target.closest('.annot')) return;
       const target = e.target.closest('.annot');
       if (target && Number(target.dataset.id) === state.editingId) return;
       if (state.tool !== 'select' || target) e.preventDefault();
@@ -1354,7 +1366,7 @@
 
     // Double-click a text box to edit it. (The pointer is captured while
     // pressing, so the event's target is the layer; look at what's under it.)
-    layer.addEventListener('dblclick', (e) => {
+    host.addEventListener('dblclick', (e) => {
       if (state.tool !== 'select') return;
       const target = document.elementsFromPoint(e.clientX, e.clientY).find((el) => el.matches('.annot.txt'));
       if (target) startEditing(Number(target.dataset.id));
@@ -1401,6 +1413,22 @@
   });
 
   // ------------------------------------------------ highlight selected text
+
+  // Highlight tool: when a drag over text ends, turn the selected letters
+  // into highlights.
+  document.addEventListener('mouseup', () => {
+    if (state.tool !== 'highlight') return;
+    setTimeout(() => {
+      const sel = window.getSelection();
+      if (sel && !sel.isCollapsed && ui.pages.contains(sel.anchorNode)) highlightSelection();
+    }, 0);
+  });
+
+  // While selecting with the Highlight tool, the selection shows in the highlight color.
+  function updateHighlightPreview() {
+    const n = parseInt(state.colors.highlight.slice(1), 16);
+    document.body.style.setProperty('--hl-preview', `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, 0.5)`);
+  }
 
   function highlightSelection() {
     const sel = window.getSelection();
@@ -1509,6 +1537,7 @@
       refreshAnnot(a);
     }
     state.colors[state.tool] = color;
+    updateHighlightPreview();
   }
 
   ui.colorInput.addEventListener('input', () => {
@@ -1992,6 +2021,7 @@
   window.pdfEditor = { state, panel, openFiles, save, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel };
 
   showColor(state.colors[state.tool]);
+  updateHighlightPreview();
   updateButtons();
   if (typeof PDFLib === 'undefined') {
     setStatus('Could not load the PDF libraries. Check your internet connection and reload.');

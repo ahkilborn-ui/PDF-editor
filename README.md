@@ -5,7 +5,7 @@ A small PDF editor that runs in your web browser, either as a normal web page or
 It can:
 
 - **Type text** anywhere on a page.
-- **Highlight**: drag a box over an area, or select some text and press <kbd>H</kbd>.
+- **Highlight**: drag across text to highlight exactly those letters, or drag a box over pictures and scans.
 - **White-out**: cover existing content with a box, then type over it to "edit" what was there.
 - **Rectangles**: outlined or filled, in any line thickness.
 - **Draw** freehand.
@@ -76,7 +76,7 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 |---|---|---|
 | Select | <kbd>V</kbd> | Select and copy text. Click an item you added to select it, drag to move it, double-click text to edit it. |
 | Text | <kbd>T</kbd> | Click where you want the text and start typing. <kbd>Enter</kbd> starts a new line, <kbd>Esc</kbd> finishes. |
-| Highlight | <kbd>H</kbd> | Drag over an area. In Select mode, select some text and press <kbd>H</kbd> to highlight exactly that text. |
+| Highlight | <kbd>H</kbd> | Drag across text to highlight exactly the letters you drag over, like a highlighter pen. It can start and stop mid-word and run across lines. Double-click a word to highlight just that word. Drag over an area with no text, such as a picture or a scan, to highlight a box. |
 | White-out | <kbd>W</kbd> | Drag to cover content with a solid box. White by default, but you can change the color. |
 | Rectangle | <kbd>R</kbd> | Drag to draw a box. Tick **Fill** for a solid box. **Line** sets the border thickness. |
 | Draw | <kbd>D</kbd> | Freehand pen. **Line** sets the thickness. |

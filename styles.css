@@ -254,6 +254,17 @@ body.multi-source .page-src { display: inline; }
 [data-main-rotation="180"] { transform: rotate(180deg) translate(-100%, -100%); }
 [data-main-rotation="270"] { transform: rotate(270deg) translateX(-100%); }
 
+/* pdf.js adds this helper canvas to the page; it must stay hidden
+   (rule from pdfjs-dist/web/pdf_viewer.css). */
+.hiddenCanvasElement {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  display: none;
+}
+
 /* Text found by OCR, shown the same way (invisible but selectable/findable). */
 .ocrLayer {
   position: absolute;
@@ -286,6 +297,14 @@ body:not([data-tool="select"]) .annotLayer {
   touch-action: none;
 }
 body[data-tool="text"] .annotLayer { cursor: text; }
+
+/* Highlight tool: drag across text to highlight exactly those letters (the
+   text layers underneath take the mouse), or drag elsewhere for a box. */
+body[data-tool="highlight"] .annotLayer { pointer-events: none; }
+body[data-tool="highlight"] .page { cursor: crosshair; }
+body[data-tool="highlight"] :is(.textLayer, .ocrLayer) span { cursor: text; }
+body[data-tool="highlight"] .textLayer ::selection,
+body[data-tool="highlight"] .ocrLayer span::selection { background: var(--hl-preview, rgba(255, 235, 59, .5)); }
 body[data-tool="highlight"] .annotLayer,
 body[data-tool="whiteout"] .annotLayer,
 body[data-tool="rect"] .annotLayer,

@@ -5,11 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PDF Editor</title>
   <link rel="icon" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="styles.css?v=024415318c">
+  <link rel="stylesheet" href="styles.css?v=afb7ddeedd">
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
-  <script src="convert.js?v=024415318c" defer></script>
-  <script src="app.js?v=024415318c" defer></script>
+  <script src="convert.js?v=afb7ddeedd" defer></script>
+  <script src="app.js?v=afb7ddeedd" defer></script>
 </head>
 <body data-tool="select">
   <header class="toolbar">
@@ -28,7 +28,7 @@
     <div class="group" role="toolbar" aria-label="Tools">
       <button class="btn tool active" data-tool="select" title="Select text / move annotations (V)">Select</button>
       <button class="btn tool" data-tool="text" title="Type text anywhere (T)">Text</button>
-      <button class="btn tool" data-tool="highlight" title="Highlight: drag a box, or select text first and press H (H)">Highlight</button>
+      <button class="btn tool" data-tool="highlight" title="Highlight: drag across text to highlight those letters, or drag a box elsewhere (H)">Highlight</button>
       <button class="btn tool" data-tool="whiteout" title="Cover existing content with a white box (W)">White-out</button>
       <button class="btn tool" data-tool="rect" title="Draw a rectangle (R)">Rectangle</button>
       <button class="btn tool" data-tool="draw" title="Freehand pen (D)">Draw</button>
@@ -92,7 +92,7 @@
       <p>Opens <strong>PDFs</strong>, <strong>photos</strong> (JPG, PNG, iPhone HEIC…) and <strong>Word .docx</strong> files. Photos and Word files are turned into PDF pages.</p>
       <ul>
         <li><strong>Text</strong> — click anywhere on a page and type.</li>
-        <li><strong>Highlight</strong> — drag over an area, or select text and press <kbd>H</kbd>.</li>
+        <li><strong>Highlight</strong> — drag across text to highlight exactly those letters (or drag a box over pictures).</li>
         <li><strong>White-out</strong> — cover existing content, then type over it to "edit" it.</li>
         <li><strong>Rectangle</strong> and <strong>Draw</strong> — boxes and freehand lines in any color.</li>
         <li><strong>Add files</strong> — merge other PDFs, photos or Word files onto the end. Each page has buttons to move or delete it.</li>
