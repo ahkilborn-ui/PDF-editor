@@ -510,8 +510,12 @@
     setStatus(`Moved page to position ${j + 1}.`);
   }
 
-  function deletePage(id) {
-    deletePages([id]);
+  // The "Delete page" button above a page in the main view. Like every page
+  // deletion, it asks first.
+  async function deletePage(id) {
+    if (state.order.length <= 1) return;
+    const pos = state.order.indexOf(id) + 1;
+    if (await askConfirm(`Delete page ${pos}? You can bring it back with Undo.`)) deletePages([id]);
   }
 
   // Delete several pages as one undoable step. At least one page must stay.
@@ -674,12 +678,40 @@
   }, { root: panel.list, rootMargin: '400px 0px' });
 
   function togglePanel(open = !panel.open) {
+    if (open === panel.open) return;
     panel.open = open;
     panel.el.classList.toggle('open', open);
     panel.el.inert = !open;
     panel.toggleBtn.classList.toggle('active', open);
     panel.toggleBtn.setAttribute('aria-expanded', String(open));
+    // On wider screens the pages move over to make room for the panel
+    // (CSS), and zoom out if needed so whole pages stay visible.
+    document.body.classList.toggle('panel-open', open);
+    fitPagesBesidePanel(open);
     if (open) renderPanel();
+  }
+
+  // The panel sits beside the pages (rather than over them) unless the
+  // window is too narrow; see .panel-open in styles.css.
+  const panelBeside = window.matchMedia('(min-width: 521px)');
+
+  function fitPagesBesidePanel(open) {
+    if (!state.order.length || !panelBeside.matches) return;
+    const scrollbar = ui.viewer.offsetWidth - ui.viewer.clientWidth;
+    const room = ui.viewer.parentElement.clientWidth - scrollbar - (open ? panel.el.offsetWidth : 0) - 48;
+    const widest = Math.max(...pages().map((p) => p.vp.width));
+    if (open) {
+      panel.zoomBefore = null;
+      if (widest * state.zoom > room) {
+        panel.zoomBefore = state.zoom;
+        setZoom(room / widest);
+        panel.zoomSet = state.zoom;
+      }
+    } else if (panel.zoomBefore != null) {
+      // Go back to the earlier zoom, unless it was changed while the panel was open.
+      if (Math.abs(state.zoom - panel.zoomSet) < 1e-3) setZoom(panel.zoomBefore);
+      panel.zoomBefore = null;
+    }
   }
 
   function resetPanel() {

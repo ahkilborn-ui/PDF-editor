@@ -96,7 +96,9 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
   - **Rotate**: use the **↺** (left) and **↻** (right) buttons in the top-right corner of a page to turn it a quarter turn. To rotate several pages at once, tick them and use the **↺ ↻** buttons next to **Delete pages**. Anything you've added to a page (text, highlights, rectangles, drawings, OCR text) turns with it.
   - **Reorder**: drag a page up or down the list and drop it where you want it.
   - Click a page to jump to it in the main view. Press <kbd>Esc</kbd> or **×** to close the panel.
+- While the page viewer is open, the pages move over so the panel never covers them. If a page wouldn't fit, the view zooms out just enough, and goes back to your zoom when you close the panel.
 - Above each page in the main view there are also **↑ Up**, **↓ Down** and **Delete page** buttons.
+- Every way of deleting pages asks **Are you sure?** first.
 - At least one page always has to stay.
 - **Undo** reverses page deletions, rotations, moves and added files too.
 
