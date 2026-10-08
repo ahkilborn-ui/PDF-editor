@@ -28,7 +28,6 @@
         <input id="add-input" type="file" accept="application/pdf,.pdf,image/*,.heic,.heif,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
       </label>
       <button id="save-btn" class="btn primary" title="Download the edited PDF (Ctrl+S)" disabled>Save</button>
-      <button id="pages-btn" class="btn" title="Show every page to delete or reorder them" aria-expanded="false" aria-controls="page-panel">Page viewer</button>
     </div>
 
     <div class="group" role="toolbar" aria-label="Tools">
@@ -86,6 +85,8 @@
       <button id="ocr-btn" class="btn accent" title="Recognize text in scanned pages so Ctrl+F works" disabled>Make searchable (OCR)</button>
       <button id="install-btn" class="btn" title="Install PDF Editor as an app that works offline" hidden>Install app</button>
     </div>
+
+    <button id="pages-btn" class="btn pages-toggle" title="Show every page to delete, rotate or reorder them" aria-expanded="false" aria-controls="page-panel">Page viewer</button>
   </header>
 
   <div class="workspace">

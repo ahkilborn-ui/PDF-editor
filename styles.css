@@ -8,6 +8,7 @@
   --accent: #0f766e;
   --viewer: #525659;
   --select: #2563eb;
+  --panel-width: 260px;
 }
 
 * { box-sizing: border-box; }
@@ -28,11 +29,13 @@ body {
 /* ---------- Toolbar ---------- */
 
 .toolbar {
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
   align-items: center;
-  padding: 8px 12px;
+  /* Room on the right for the Page viewer button. */
+  padding: 8px calc(var(--panel-width) / 2 + 72px) 8px 12px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
 }
@@ -91,6 +94,14 @@ body {
   min-width: 48px;
   text-align: center;
   font-variant-numeric: tabular-nums;
+}
+
+/* Page viewer button: bottom-right of the toolbar, centered over the panel it opens. */
+.pages-toggle {
+  position: absolute;
+  right: calc(var(--panel-width) / 2);
+  bottom: 8px;
+  transform: translateX(50%);
 }
 
 /* Color palette */
@@ -326,7 +337,7 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   z-index: 20;
   display: flex;
   flex-direction: column;
-  width: 260px;
+  width: var(--panel-width);
   max-width: 100%;
   background: var(--panel);
   border-left: 1px solid var(--border);
@@ -530,7 +541,8 @@ body[data-tool="draw"] .annot { pointer-events: none; }
 .statusbar progress { width: 200px; }
 
 @media (max-width: 700px) {
-  .toolbar { gap: 6px; padding: 6px; }
+  .toolbar { gap: 6px; padding: 6px calc(var(--panel-width) / 2 + 66px) 6px 6px; }
+  .pages-toggle { bottom: 6px; }
   .btn { padding: 0 8px; }
   .drop-hint { margin: 16px; }
 }
