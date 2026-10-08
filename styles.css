@@ -300,6 +300,14 @@ body[data-tool="draw"] .annot { pointer-events: none; }
 .annot.selected { outline: 2px dashed var(--select); outline-offset: 2px; }
 .annot.draft { pointer-events: none; }
 
+/* Off-screen area where Word files are laid out before being turned into PDF pages. */
+.convert-host {
+  position: fixed;
+  top: 0;
+  left: -100000px;
+  pointer-events: none;
+}
+
 /* ---------- Status bar ---------- */
 
 .statusbar {

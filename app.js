@@ -2,6 +2,7 @@
  *
  * pdf.js   renders pages and provides the selectable/searchable text layer.
  * pdf-lib  writes the edits (and merged / deleted / reordered pages) into a new PDF.
+ * convert.js turns photos and Word files into PDFs so they can be opened too.
  * tesseract.js  recognizes text in scanned pages (OCR) so Ctrl+F can find it.
  *
  * The open document is a list of pages (state.order) that can come from several
@@ -153,9 +154,7 @@
     return { x: (evt.clientX - r.left) / state.zoom, y: (evt.clientY - r.top) / state.zoom };
   }
 
-  function isPdf(file) {
-    return file && (file.type === 'application/pdf' || /\.pdf$/i.test(file.name));
-  }
+  const { kindOf, toPdf: convertToPdf, makeSanitizer, writeInvisibleText } = window.PdfConvert;
 
   // The tool whose color an annotation type uses.
   function toolFor(type) {
@@ -229,7 +228,13 @@
 
   // Open replaces the current document; append (merge) adds pages to the end.
   async function openFiles(fileList, append = false) {
-    const files = [...fileList].filter(isPdf);
+    const all = [...fileList];
+    const files = all.filter((f) => kindOf(f));
+    const skipped = all.filter((f) => !kindOf(f));
+    if (skipped.length) {
+      alert(`These files can't be opened: ${skipped.map((f) => f.name).join(', ')}\n\n` +
+        'Supported: PDF, photos (JPG, PNG, iPhone HEIC…) and Word .docx files.');
+    }
     if (!files.length) return;
     if (state.busy) {
       alert('Please wait for the current task to finish.');
@@ -287,9 +292,21 @@
 
   async function addSource(file, token) {
     try {
-      setStatus(`Opening ${file.name}…`);
       const pdfjs = await loadPdfjs();
-      const bytes = new Uint8Array(await file.arrayBuffer());
+      const kind = kindOf(file);
+      let bytes;
+      if (kind === 'pdf') {
+        setStatus(`Opening ${file.name}…`);
+        bytes = new Uint8Array(await file.arrayBuffer());
+      } else {
+        setStatus(`Converting ${file.name} to PDF…`);
+        setProgress(0);
+        try {
+          bytes = await convertToPdf(file, (f) => setProgress(f));
+        } finally {
+          setProgress(null);
+        }
+      }
       const task = pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false });
       task.onPassword = (provide, reason) => {
         const again = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD;
@@ -303,7 +320,7 @@
         return 0;
       }
       const src = state.sources.length;
-      state.sources.push({ name: file.name || 'document.pdf', bytes, doc });
+      state.sources.push({ name: file.name || 'document.pdf', bytes, doc, converted: kind !== 'pdf' });
 
       const newPages = [];
       for (let i = 0; i < doc.numPages; i++) {
@@ -327,7 +344,7 @@
     } catch (err) {
       console.error(err);
       setStatus(`Could not open ${file.name}: ${err.message || err}`);
-      alert(`Could not open ${file.name}: ${err.message || err}`);
+      alert(`Could not open ${file.name}: ${err.message || err}.`);
       return 0;
     }
   }
@@ -1172,31 +1189,6 @@
 
   // ------------------------------------------------------------- saving
 
-  // The built-in PDF font only covers Latin characters (WinAnsi). Replace
-  // anything it can't encode so saving never fails.
-  function makeSanitizer(font) {
-    const ok = new Map();
-    const swaps = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...', '\t': '    ' };
-    return (str) => {
-      let out = '';
-      for (const ch of str) {
-        const c = swaps[ch] ?? ch;
-        if (!ok.has(c)) {
-          let good = true;
-          try {
-            font.encodeText(c);
-            font.widthOfTextAtSize(c, 10);
-          } catch {
-            good = false;
-          }
-          ok.set(c, good);
-        }
-        out += ok.get(c) ? c : '?';
-      }
-      return out;
-    };
-  }
-
   async function loadForSaving(source) {
     try {
       return await PDFLib.PDFDocument.load(source.bytes);
@@ -1352,36 +1344,12 @@
     }
   }
 
-  // OCR text is written with text render mode 3 (invisible): it isn't drawn,
-  // but PDF readers can search, select and copy it — the same technique used
-  // by scanners and tools like OCRmyPDF.
-  function writeInvisibleText(target, font, clean, words, toPdf, rotation) {
-    const L = PDFLib;
-    const fontKey = target.node.newFontDictionary(font.name, font.ref);
-    const rad = (rotation * Math.PI) / 180;
-    const cos = Math.cos(rad);
-    const sin = Math.sin(rad);
-    const ops = [L.pushGraphicsState(), L.beginText(), L.setTextRenderingMode(L.TextRenderingMode.Invisible)];
-    for (const w of words) {
-      const text = clean(w.text);
-      if (!text.trim()) continue;
-      const natural = font.widthOfTextAtSize(text, w.size);
-      const squeeze = natural > 0 ? Math.max(1, Math.min(1000, (100 * w.w) / natural)) : 100;
-      const [x, y] = toPdf(w.x, w.baseline);
-      ops.push(
-        L.setFontAndSize(fontKey, w.size),
-        L.setCharacterSqueeze(squeeze),
-        L.setTextMatrix(cos, sin, -sin, cos, x, y),
-        L.showText(font.encodeText(text)),
-      );
-    }
-    ops.push(L.endText(), L.popGraphicsState());
-    target.pushOperators(...ops);
-  }
-
   function outputName() {
-    const base = (state.sources[0]?.name || 'document.pdf').replace(/\.pdf$/i, '');
-    return `${base}-${state.sources.length > 1 ? 'merged' : 'edited'}.pdf`;
+    const first = state.sources[0];
+    const base = (first?.name || 'document.pdf').replace(/\.[^.]+$/, '');
+    if (state.sources.length > 1) return `${base}-merged.pdf`;
+    // A freshly converted photo or Word file just becomes "name.pdf".
+    return first?.converted && state.undo.length === 0 ? `${base}.pdf` : `${base}-edited.pdf`;
   }
 
   function download(bytes, name) {

@@ -7,18 +7,19 @@
   <link rel="stylesheet" href="styles.css">
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <script src="convert.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body data-tool="select">
   <header class="toolbar">
     <div class="group">
-      <label class="btn" title="Open a PDF (Ctrl+O)">
+      <label class="btn" title="Open PDFs, photos or Word files (Ctrl+O). Photos and Word files are converted to PDF.">
         Open
-        <input id="file-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+        <input id="file-input" type="file" accept="application/pdf,.pdf,image/*,.heic,.heif,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
       </label>
-      <label class="btn" title="Merge: add the pages of other PDFs to the end of this one">
-        Add PDF
-        <input id="add-input" type="file" accept="application/pdf,.pdf" multiple hidden>
+      <label class="btn" title="Merge: add PDFs, photos or Word files to the end of this document">
+        Add files
+        <input id="add-input" type="file" accept="application/pdf,.pdf,image/*,.heic,.heif,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
       </label>
       <button id="save-btn" class="btn primary" title="Download the edited PDF (Ctrl+S)" disabled>Save</button>
     </div>
@@ -82,13 +83,14 @@
   <main id="viewer">
     <div id="drop-hint" class="drop-hint">
       <h1>PDF Editor</h1>
-      <p>Drop PDFs here, or click <strong>Open</strong>. Pick several files to merge them.</p>
+      <p>Drop files here, or click <strong>Open</strong>. Pick several files to merge them.</p>
+      <p>Opens <strong>PDFs</strong>, <strong>photos</strong> (JPG, PNG, iPhone HEIC…) and <strong>Word .docx</strong> files. Photos and Word files are turned into PDF pages.</p>
       <ul>
         <li><strong>Text</strong> — click anywhere on a page and type.</li>
         <li><strong>Highlight</strong> — drag over an area, or select text and press <kbd>H</kbd>.</li>
         <li><strong>White-out</strong> — cover existing content, then type over it to "edit" it.</li>
         <li><strong>Rectangle</strong> and <strong>Draw</strong> — boxes and freehand lines in any color.</li>
-        <li><strong>Add PDF</strong> — merge other PDFs onto the end. Each page has buttons to move or delete it.</li>
+        <li><strong>Add files</strong> — merge other PDFs, photos or Word files onto the end. Each page has buttons to move or delete it.</li>
         <li><strong>Make searchable</strong> — reads scanned pages (OCR) so <kbd>Ctrl</kbd>+<kbd>F</kbd> finds their words.</li>
       </ul>
       <p class="muted">Everything runs in your browser. Your files are never uploaded.</p>
