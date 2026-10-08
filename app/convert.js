@@ -404,6 +404,16 @@
     return qpdf.FS.readFile('/out.pdf');
   }
 
+  /** Returns qpdf's rewrite of the PDF, which repairs many kinds of damage. */
+  function repairPdf(bytes) {
+    return runQpdf(['/in.pdf', '/out.pdf'], bytes);
+  }
+
+  /** Loads pdf-lib if it failed to load with the page (e.g. the connection dropped). */
+  async function ensurePdfLib() {
+    if (typeof window.PDFLib === 'undefined') await loadScript(lib('pdf-lib@1.17.1/dist/pdf-lib.min.js'));
+  }
+
   /** Returns a copy of the PDF with its encryption and edit restrictions removed. */
   function unlockPdf(bytes, password = '') {
     return runQpdf(['--decrypt', `--password=${password}`, '/in.pdf', '/out.pdf'], bytes);
@@ -428,5 +438,5 @@
     throw new Error('this file type isn\'t supported');
   }
 
-  window.PdfConvert = { kindOf, toPdf, makeSanitizer, writeInvisibleText, unlockPdf, lockPdf };
+  window.PdfConvert = { kindOf, toPdf, makeSanitizer, writeInvisibleText, unlockPdf, lockPdf, repairPdf, ensurePdfLib };
 })();

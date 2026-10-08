@@ -5,7 +5,7 @@
 // app opens and works with no internet connection. A new build has a new
 // VERSION, which makes the browser fetch the new files and drop the old ones.
 
-const VERSION = 'b4c4a8bcddbe';
+const VERSION = '6b5decd97f32';
 const FILES = [
   "./",
   "app.js",

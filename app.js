@@ -163,7 +163,7 @@
     return { x: (evt.clientX - r.left) / state.zoom, y: (evt.clientY - r.top) / state.zoom };
   }
 
-  const { kindOf, toPdf: convertToPdf, makeSanitizer, writeInvisibleText, unlockPdf, lockPdf } = window.PdfConvert;
+  const { kindOf, toPdf: convertToPdf, makeSanitizer, writeInvisibleText, unlockPdf, lockPdf, repairPdf, ensurePdfLib } = window.PdfConvert;
 
   // The tool whose color an annotation type uses.
   function toolFor(type) {
@@ -1423,12 +1423,12 @@
 
   // Highlight tool: when a drag over text ends, turn the selected letters
   // into highlights.
+  // (Done right away, not after a delay, so a quick next click can't change
+  // the selection first.)
   document.addEventListener('mouseup', () => {
     if (state.tool !== 'highlight') return;
-    setTimeout(() => {
-      const sel = window.getSelection();
-      if (sel && !sel.isCollapsed && ui.pages.contains(sel.anchorNode)) highlightSelection();
-    }, 0);
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && ui.pages.contains(sel.anchorNode)) highlightSelection();
   });
 
   // While selecting with the Highlight tool, the selection shows in the highlight color.
@@ -1725,35 +1725,116 @@
 
   // ------------------------------------------------------------- saving
 
-  async function loadForSaving(source) {
+  // Load one source file with pdf-lib so it can be saved. Problems are fixed
+  // automatically where possible:
+  //   protected (encrypted)  -> unlocked with qpdf
+  //   damaged / unreadable    -> repaired with qpdf
+  //   still unreadable        -> rebuilt from the pages as the editor shows them
+  async function loadForSaving(source, { repair = false } = {}) {
+    const L = PDFLib;
+    // pdf-lib can "load" some broken files that then fail later, so also
+    // check that every page can be read.
+    const load = async (data) => {
+      const doc = await L.PDFDocument.load(data);
+      doc.getPages();
+      return doc;
+    };
+    let bytes = source.bytes;
+    if (repair) return rebuildFromView(source);
     try {
-      return await PDFLib.PDFDocument.load(source.bytes);
+      return await load(bytes);
     } catch (err) {
-      if (!/encrypt/i.test(err.message)) throw err;
+      if (/encrypt/i.test(err.message)) {
+        // Uses the password typed when it was opened (none is needed for
+        // files that only restrict editing or printing).
+        setStatus(`Unlocking ${source.name} so it can be saved…`);
+        try {
+          source.unlocked ??= await unlockPdf(source.bytes, source.password || '');
+        } catch (unlockErr) {
+          console.warn('Unlock failed; rebuilding instead', unlockErr);
+          return rebuildFromView(source);
+        }
+        source.wasProtected = true;
+        bytes = source.unlocked;
+        try {
+          return await load(bytes);
+        } catch (afterUnlock) {
+          console.warn('Unlocked file still unreadable', afterUnlock);
+        }
+      } else {
+        console.warn(`${source.name} couldn't be read for saving; repairing`, err);
+      }
     }
-    // Protected (encrypted) PDF: remove the protection first, using the
-    // password typed when it was opened (none is needed for files that only
-    // restrict editing or printing).
-    setStatus(`Unlocking ${source.name} so it can be saved…`);
+    setStatus(`Repairing ${source.name}…`);
     try {
-      source.unlocked ??= await unlockPdf(source.bytes, source.password || '');
-    } catch (err) {
-      throw new Error(`couldn't unlock ${source.name}: ${err.message}`);
+      source.repaired ??= await repairPdf(bytes);
+      const doc = await load(source.repaired);
+      source.saveNote = `${source.name} was slightly damaged and has been repaired.`;
+      return doc;
+    } catch (repairErr) {
+      console.warn('Repair failed; rebuilding from the displayed pages', repairErr);
     }
-    source.wasProtected = true;
-    return PDFLib.PDFDocument.load(source.unlocked);
+    return rebuildFromView(source);
+  }
+
+  // Last resort for a file nothing else can read: make a new PDF from what the
+  // editor displays. Each page becomes a high-resolution picture with the
+  // page's real text invisibly on top, so it looks the same and stays
+  // searchable. The page size and position match the original exactly, so
+  // edits land where they were made.
+  async function rebuildFromView(source) {
+    const L = PDFLib;
+    setStatus(`Rebuilding ${source.name} so it can be saved…`);
+    const out = await L.PDFDocument.create();
+    const font = await out.embedFont(L.StandardFonts.Helvetica);
+    const clean = makeSanitizer(font);
+    for (let i = 1; i <= source.doc.numPages; i++) {
+      const pdfPage = await source.doc.getPage(i);
+      const [x0, y0, x1, y1] = pdfPage.view;
+      const width = x1 - x0;
+      const height = y1 - y0;
+      const scale = Math.min(200 / 72, 4000 / Math.max(width, height));
+      const viewport = pdfPage.getViewport({ scale, rotation: 0 });
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
+      const image = await out.embedJpg(new Uint8Array(await blob.arrayBuffer()));
+      canvas.width = canvas.height = 0;
+
+      const page = out.addPage([width, height]);
+      page.setMediaBox(x0, y0, width, height);
+      page.setRotation(L.degrees(pdfPage.rotate));
+      page.drawImage(image, { x: x0, y: y0, width, height });
+      // The page's own text, at its original position, invisible.
+      const content = await pdfPage.getTextContent();
+      const words = [];
+      for (const item of content.items) {
+        if (!item.str || !item.str.trim()) continue;
+        const [a, b, , d, e, f] = item.transform;
+        words.push({ text: item.str, x: e, baseline: f, w: item.width, size: Math.hypot(a, b) || Math.abs(d) || 10,
+          rot: -(Math.atan2(b, a) * 180) / Math.PI });
+      }
+      if (words.length) writeInvisibleText(page, font, clean, words, (x, y) => [x, y], 0);
+    }
+    source.saveNote = `${source.name} was damaged, so its pages were saved as high-quality images (the text is still searchable).`;
+    return out;
   }
 
   // Build the output document with the pages in state.order. When the first
   // file's pages are still in their original order (some may be deleted) and
   // any other files' pages come after them, edit that file in place so its
   // bookmarks, metadata and form fields survive. Otherwise assemble a new PDF.
-  async function assemblePages() {
+  async function assemblePages({ repair = false } = {}) {
     const L = PDFLib;
     const list = pages();
     const libDocs = new Map();
     const lib = async (src) => {
-      if (!libDocs.has(src)) libDocs.set(src, await loadForSaving(state.sources[src]));
+      if (!libDocs.has(src)) libDocs.set(src, await loadForSaving(state.sources[src], { repair }));
       return libDocs.get(src);
     };
 
@@ -1801,9 +1882,9 @@
   }
 
   // Build the edited PDF (pages in order, rotations, edits, OCR text) as bytes.
-  async function buildPdf() {
+  async function buildPdf({ repair = false } = {}) {
     const L = PDFLib;
-    const out = await assemblePages();
+    const out = await assemblePages({ repair });
     const font = await out.embedFont(L.StandardFonts.Helvetica);
     const clean = makeSanitizer(font);
     const outPages = out.getPages();
@@ -1887,15 +1968,14 @@
       await notSaved('There is nothing to save yet. Open a file first.');
       return;
     }
-    if (state.busy) {
-      await notSaved(`PDF Editor is still busy ${state.busyLabel || 'working'}. Wait until it finishes, then save again.`);
-      return;
-    }
+    if (state.savePending) return; // a save is already waiting to happen
     finishEditing();
 
-    // Ask for the location first, while the click / key press still counts
-    // as the user's action (browsers require that for the save dialog).
+    // Ask for the location (or for permission to update the file chosen
+    // before) right away, while the click / key press still counts as the
+    // person's action — browsers only allow these in response to one.
     let handle = saveAs ? null : state.saveHandle;
+    if (handle && !(await hasWritePermission(handle))) handle = null;
     if (canPickSaveFile && !handle) {
       try {
         handle = await window.showSaveFilePicker({
@@ -1915,6 +1995,15 @@
       }
     }
 
+    // Busy (opening files, reading a scan, another save…)? Save as soon as it's done.
+    if (state.busy) {
+      state.savePending = true;
+      setStatus(`Will save as soon as PDF Editor finishes ${state.busyLabel || 'what it is doing'}…`);
+      while (state.busy) await new Promise((resolve) => setTimeout(resolve, 200));
+      state.savePending = false;
+      finishEditing();
+    }
+
     state.busy = true;
     state.busyLabel = 'saving';
     updateButtons();
@@ -1922,11 +2011,24 @@
     let bytes = null;
     let name = outputName();
     let failure = null;
+    let savedToDownloadsInstead = null;
     try {
-      if (typeof PDFLib === 'undefined') {
-        throw new Error('the PDF tools could not be loaded. Check your internet connection and reload the page (your changes will be lost on reload).');
+      // The PDF tools may have failed to load (e.g. the connection dropped): try again.
+      try {
+        await ensurePdfLib();
+      } catch {
+        throw new Error('the PDF tools could not be loaded. Check your internet connection and save again (keep this page open so your changes are not lost). The installable offline app avoids this.');
       }
-      bytes = await buildPdf();
+      for (const src of state.sources) src.saveNote = null;
+      try {
+        bytes = await buildPdf();
+      } catch (err) {
+        // Something in a file tripped up the save: rebuild every file from
+        // its displayed pages and try once more.
+        console.warn('Save failed; retrying with all files rebuilt', err);
+        setStatus('Saving… (repairing the document)');
+        bytes = await buildPdf({ repair: true });
+      }
 
       // If a file needed a password to open, offer to keep that password on
       // the saved copy (asked once per document). Edit/print restrictions
@@ -1948,12 +2050,23 @@
           note = ' It opens without a password.';
         }
       }
+      for (const src of used) if (src.saveNote) note += ` ${src.saveNote}`;
 
       if (handle) {
-        await writeToFile(handle, bytes);
-        state.saveHandle = handle;
-        name = handle.name;
-        note += ' Ctrl+S saves to this file again.';
+        try {
+          await writeToFile(handle, bytes);
+          state.saveHandle = handle;
+          name = handle.name;
+          note += ' Ctrl+S saves to this file again.';
+        } catch (err) {
+          // The chosen file can't be written (e.g. it's open in another
+          // program). Don't lose the work: save a copy to Downloads instead.
+          console.warn(err);
+          download(bytes, name);
+          savedToDownloadsInstead = { file: handle.name, reason: err.message };
+          state.saveHandle = handle; // the next Ctrl+S tries that file again
+          note += ' It is in your Downloads folder.';
+        }
       } else {
         download(bytes, name);
         note += ' It is in your Downloads folder.';
@@ -1969,39 +2082,54 @@
       updateButtons();
     }
 
-    if (failure) {
-      // Writing to the chosen file failed but the PDF itself is ready:
-      // offer to download it instead, so the work isn't lost.
-      const canDownload = failure.writeFailed && bytes;
-      const choice = await notSaved(`Your changes have not been saved. ${capitalize(failure.message || String(failure))}`,
-        { retry: canDownload ? 'Download a copy instead' : 'Try again' });
-      if (choice && canDownload) {
-        download(bytes, name);
-        state.dirty = false;
-        updateButtons();
-        setStatus(`Saved a copy of ${name} to your Downloads folder.`);
-      } else if (choice) {
+    if (savedToDownloadsInstead) {
+      await askConfirm(
+        `"${savedToDownloadsInstead.file}" couldn't be updated, so your work was saved as "${name}" in your Downloads folder instead. ` +
+        `This usually means the file is open in another program, like Acrobat. Close it there and press Ctrl+S to save to "${savedToDownloadsInstead.file}" again. ` +
+        `(Details: ${savedToDownloadsInstead.reason})`,
+        { title: 'Saved to Downloads instead', yes: null, no: 'OK', danger: false });
+    } else if (failure) {
+      if (await notSaved(`Your changes have not been saved. ${capitalize(failure.message || String(failure))}`, { retry: 'Try again' })) {
         save({ saveAs });
       }
     }
   }
 
-  // Write the PDF to a file chosen in the save window, then check the file
-  // on disk really has all of it.
-  async function writeToFile(handle, bytes) {
+  // Can we still write to the file chosen earlier? Asks again if the browser
+  // has since withdrawn permission (Chrome does this after a while).
+  async function hasWritePermission(handle) {
+    if (!handle.queryPermission) return true;
     try {
-      const writable = await handle.createWritable();
-      await writable.write(bytes);
-      await writable.close();
-      const written = await handle.getFile();
-      if (written.size !== bytes.length) {
-        throw new Error(`only ${written.size} of ${bytes.length} bytes were written`);
-      }
-    } catch (err) {
-      const e = new Error(`It couldn't be written to "${handle.name}". If that file is open in another program (like Acrobat), close it there and try again, or use Save As (Ctrl+Shift+S) to pick another file. (Details: ${err.message})`);
-      e.writeFailed = true;
-      throw e;
+      if ((await handle.queryPermission({ mode: 'readwrite' })) === 'granted') return true;
+      return (await handle.requestPermission({ mode: 'readwrite' })) === 'granted';
+    } catch {
+      return false;
     }
+  }
+
+  // Write the PDF to a file chosen in the save window and check the file on
+  // disk really has all of it. A file another program has open is often
+  // released a moment later, so retry a few times before giving up.
+  async function writeToFile(handle, bytes) {
+    let lastError = null;
+    for (const wait of [0, 500, 1000, 2000]) {
+      if (wait) {
+        setStatus(`Saving… (waiting for ${handle.name} to become available)`);
+        await new Promise((resolve) => setTimeout(resolve, wait));
+      }
+      try {
+        const writable = await handle.createWritable();
+        await writable.write(bytes);
+        await writable.close();
+        const written = await handle.getFile();
+        if (written.size !== bytes.length) throw new Error(`only ${written.size} of ${bytes.length} bytes were written`);
+        return;
+      } catch (err) {
+        lastError = err;
+        if (err.name === 'NotAllowedError') break; // permission withdrawn: retrying won't help
+      }
+    }
+    throw lastError;
   }
 
   function capitalize(text) {

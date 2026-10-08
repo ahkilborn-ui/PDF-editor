@@ -110,13 +110,16 @@ On a Mac, use <kbd>⌘</kbd> wherever this says <kbd>Ctrl</kbd>.
 
 The tab title shows a **•** when there are unsaved changes.
 
-If a save doesn't happen for any reason, a red **Not saved** popup says why, with a button to fix it where there is one. For example:
-- **The file is open in another program:** choose **Download a copy instead**, or close the file there and save again.
-- **You closed the save window:** choose **Choose where to save**.
-- **The app is still busy,** for example reading a scan: wait for it to finish, then save.
-- **Something else went wrong:** choose **Try again**.
+Saving fixes most problems by itself:
 
-The app also checks that the whole file was written to disk. Closing the tab with unsaved changes asks you to confirm first.
+- **The app is busy** (for example reading a scan): the save happens automatically as soon as it finishes.
+- **The file is open in another program, like Acrobat:** the app tries again for a few seconds. If the file is still locked, your work is saved to your **Downloads** folder instead, and a popup says so. Close the file in the other program, and the next Ctrl+S saves to it again.
+- **The file wasn't fully written:** the app checks every save and rewrites the file if needed.
+- **Chrome has forgotten permission to update the file:** it asks you again.
+- **A damaged PDF:** the app repairs it. If it can't be repaired, the pages are rebuilt exactly as you see them, as high-quality images with the text still searchable.
+- **The PDF tools didn't load** (for example the connection dropped): they're loaded again when you save.
+
+You'll still see a red **Not saved** popup if you close the save window without choosing a place (click **Choose where to save**), or if something goes wrong that the app can't fix (click **Try again**). Closing the tab with unsaved changes asks you to confirm first.
 
 ### Merging, deleting and reordering pages
 
