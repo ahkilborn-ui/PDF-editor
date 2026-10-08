@@ -106,8 +106,18 @@ for (const f of fs.readdirSync(path.join(ROOT, 'icons'))) copy(path.join(ROOT, '
 copy(path.join(ROOT, 'offline', 'install.js'), path.join(OUT, 'install.js'));
 copy(path.join(ROOT, 'offline', 'manifest.webmanifest'), path.join(OUT, 'manifest.webmanifest'));
 
-// 5. index.html: local libraries, manifest, install script; drop browser-only bits.
-let html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+// 5a. Stamp the browser version's index.html with a version for its own
+//     files ("styles.css?v=…"), so after an update a browser can't pair the
+//     new page with an old cached stylesheet or script.
+const stamp = crypto.createHash('sha256');
+for (const f of SHARED) stamp.update(fs.readFileSync(path.join(ROOT, f)));
+const v = stamp.digest('hex').slice(0, 10);
+const rootHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
+  .replace(/(href|src)="(styles\.css|app\.js|convert\.js)(\?v=[\w]+)?"/g, `$1="$2?v=${v}"`);
+fs.writeFileSync(path.join(ROOT, 'index.html'), rootHtml);
+
+// 5b. index.html: local libraries, manifest, install script; drop browser-only bits.
+let html = rootHtml;
 html = html.replaceAll(CDN, 'vendor/');
 html = html.replace(/\s*<([a-z]+)[^>]*\bdata-browser-only\b[^>]*>[\s\S]*?<\/\1>/g, '');
 html = html.replace('<title>PDF Editor</title>', [
@@ -117,7 +127,8 @@ html = html.replace('<title>PDF Editor</title>', [
   '  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">',
   '  <script>window.PDF_EDITOR_LIB_BASE = \'vendor/\';</script>',
 ].join('\n'));
-html = html.replace('<script src="app.js" defer></script>', '<script src="app.js" defer></script>\n  <script src="install.js" defer></script>');
+html = html.replace(/(<script src="app\.js[^"]*" defer><\/script>)/, '$1\n  <script src="install.js" defer></script>');
+if (!html.includes('install.js')) fail('could not add install.js to app/index.html');
 if (html.includes(CDN)) fail('index.html still refers to the CDN');
 fs.writeFileSync(path.join(OUT, 'index.html'), html);
 
