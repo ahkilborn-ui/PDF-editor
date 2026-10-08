@@ -1,0 +1,1183 @@
+/* PDF Editor — runs entirely in the browser.
+ *
+ * pdf.js   renders pages and provides the selectable/searchable text layer.
+ * pdf-lib  writes the edits back into the PDF when saving.
+ * tesseract.js  recognizes text in scanned pages (OCR) so Ctrl+F can find it.
+ *
+ * Annotations are stored in "page units": CSS pixels of the page at 100% zoom,
+ * measured from the top-left of the page as displayed (rotation applied).
+ * They are converted to PDF coordinates only when saving.
+ */
+(() => {
+  'use strict';
+
+  const CDN = {
+    pdfjs: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs',
+    pdfjsWorker: 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs',
+    tessWorker: 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/worker.min.js',
+    tessCore: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5.1.1',
+    tessLang: 'https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int',
+  };
+
+  const FONT_FAMILY = 'Helvetica, Arial, sans-serif';
+  const TEXT_LINE_HEIGHT = 1.2;
+  const TEXT_PADDING = 2;
+  const HIGHLIGHT_OPACITY = 0.4;
+  const INK_WIDTH = 2;
+  const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3, 4];
+  const OCR_DPI = 300;
+  const OCR_MAX_CANVAS = 5000;
+  const MIN_CHARS_FOR_TEXT_PAGE = 20;
+
+  const DEFAULT_COLORS = {
+    select: '#ffeb3b',
+    text: '#000000',
+    highlight: '#ffeb3b',
+    whiteout: '#ffffff',
+    draw: '#d32f2f',
+  };
+
+  const state = {
+    pdfjs: null,
+    doc: null,
+    bytes: null,
+    fileName: 'document.pdf',
+    pages: [],
+    annots: [],
+    ocr: {},
+    zoom: 1.25,
+    tool: 'select',
+    colors: { ...DEFAULT_COLORS },
+    fontSize: 14,
+    selectedId: null,
+    editingId: null,
+    undo: [],
+    redo: [],
+    dirty: false,
+    busy: false,
+    nextId: 1,
+    loadToken: 0,
+    textReady: null,
+  };
+
+  const $ = (sel) => document.querySelector(sel);
+  const ui = {
+    fileInput: $('#file-input'),
+    saveBtn: $('#save-btn'),
+    colorInput: $('#color-input'),
+    sizeInput: $('#size-input'),
+    undoBtn: $('#undo-btn'),
+    redoBtn: $('#redo-btn'),
+    deleteBtn: $('#delete-btn'),
+    zoomIn: $('#zoom-in'),
+    zoomOut: $('#zoom-out'),
+    zoomFit: $('#zoom-fit'),
+    zoomLabel: $('#zoom-label'),
+    ocrBtn: $('#ocr-btn'),
+    viewer: $('#viewer'),
+    pages: $('#pages'),
+    status: $('#status'),
+    progress: $('#progress'),
+    toolButtons: [...document.querySelectorAll('.tool')],
+  };
+
+  // Where the text baseline sits inside a line box, as a fraction of font size.
+  // Measured from the real browser font so saved text lines up with the screen.
+  const BASELINE_RATIO = (() => {
+    const box = document.createElement('div');
+    box.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font:100px/${TEXT_LINE_HEIGHT} ${FONT_FAMILY}`;
+    const marker = document.createElement('span');
+    marker.style.cssText = 'display:inline-block;width:1px;height:0;vertical-align:baseline';
+    box.append('Hg', marker);
+    document.body.append(box);
+    const ratio = marker.offsetTop / 100;
+    box.remove();
+    return ratio > 0.5 && ratio < 1.2 ? ratio : 0.95;
+  })();
+
+  // ---------------------------------------------------------------- helpers
+
+  function setStatus(msg) {
+    ui.status.textContent = msg;
+  }
+
+  function setProgress(value) {
+    if (value == null) {
+      ui.progress.hidden = true;
+    } else {
+      ui.progress.hidden = false;
+      ui.progress.value = value;
+    }
+  }
+
+  function hexToRgb(hex) {
+    const n = parseInt(hex.slice(1), 16);
+    return PDFLib.rgb(((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255);
+  }
+
+  function getAnnot(id) {
+    return state.annots.find((a) => a.id === id);
+  }
+
+  function pageAt(el) {
+    const pageEl = el.closest('.page');
+    return pageEl ? state.pages[Number(pageEl.dataset.index)] : null;
+  }
+
+  function pointInPage(page, evt) {
+    const r = page.el.getBoundingClientRect();
+    return { x: (evt.clientX - r.left) / state.zoom, y: (evt.clientY - r.top) / state.zoom };
+  }
+
+  async function loadPdfjs() {
+    if (!state.pdfjs) {
+      state.pdfjs = await import(CDN.pdfjs);
+      state.pdfjs.GlobalWorkerOptions.workerSrc = CDN.pdfjsWorker;
+    }
+    return state.pdfjs;
+  }
+
+  // ----------------------------------------------------------- undo / redo
+
+  function snapshot() {
+    return JSON.stringify({ annots: state.annots, ocr: state.ocr });
+  }
+
+  function checkpoint() {
+    state.undo.push(snapshot());
+    if (state.undo.length > 200) state.undo.shift();
+    state.redo = [];
+    state.dirty = true;
+    updateButtons();
+  }
+
+  function restore(snap) {
+    const data = JSON.parse(snap);
+    state.annots = data.annots;
+    state.ocr = data.ocr;
+    state.selectedId = null;
+    state.editingId = null;
+    state.pages.forEach((p) => {
+      drawAnnots(p);
+      drawOcrLayer(p);
+    });
+    state.dirty = true;
+    updateButtons();
+  }
+
+  function undo() {
+    finishEditing();
+    if (!state.undo.length) return;
+    state.redo.push(snapshot());
+    restore(state.undo.pop());
+  }
+
+  function redo() {
+    finishEditing();
+    if (!state.redo.length) return;
+    state.undo.push(snapshot());
+    restore(state.redo.pop());
+  }
+
+  function updateButtons() {
+    const hasDoc = !!state.doc;
+    ui.saveBtn.disabled = !hasDoc || state.busy;
+    ui.ocrBtn.disabled = !hasDoc || state.busy;
+    ui.undoBtn.disabled = !state.undo.length;
+    ui.redoBtn.disabled = !state.redo.length;
+    ui.deleteBtn.disabled = state.selectedId == null;
+    ui.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
+  }
+
+  // -------------------------------------------------------------- loading
+
+  async function openFile(file) {
+    if (!file) return;
+    if (state.dirty && !confirm('You have unsaved changes. Open another file anyway?')) return;
+    const token = ++state.loadToken;
+    try {
+      setStatus(`Opening ${file.name}…`);
+      const pdfjs = await loadPdfjs();
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const task = pdfjs.getDocument({ data: bytes.slice(), isEvalSupported: false });
+      task.onPassword = (provide, reason) => {
+        const again = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD;
+        const pw = prompt(again ? 'Wrong password. Try again:' : 'This PDF is password protected. Password:');
+        if (pw == null) task.destroy();
+        else provide(pw);
+      };
+      const doc = await task.promise;
+      if (token !== state.loadToken) return;
+
+      if (state.doc) state.doc.destroy();
+      Object.assign(state, {
+        doc, bytes, fileName: file.name || 'document.pdf',
+        pages: [], annots: [], ocr: {}, undo: [], redo: [],
+        selectedId: null, editingId: null, dirty: false,
+      });
+      document.title = `${state.fileName} — PDF Editor`;
+      document.body.classList.add('has-doc');
+      await buildPages(token);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Could not open ${file.name}: ${err.message || err}`);
+    }
+  }
+
+  async function buildPages(token) {
+    ui.pages.textContent = '';
+    if (observer) observer.disconnect();
+    const { doc } = state;
+    for (let i = 0; i < doc.numPages; i++) {
+      const pdfPage = await doc.getPage(i + 1);
+      if (token !== state.loadToken) return;
+      const vp = pdfPage.getViewport({ scale: 1 });
+      const el = document.createElement('div');
+      el.className = 'page';
+      el.dataset.index = i;
+
+      const canvas = document.createElement('canvas');
+      const textLayer = document.createElement('div');
+      textLayer.className = 'textLayer';
+      const ocrLayer = document.createElement('div');
+      ocrLayer.className = 'ocrLayer';
+      const annotLayer = document.createElement('div');
+      annotLayer.className = 'annotLayer';
+      el.append(canvas, textLayer, ocrLayer, annotLayer);
+
+      const page = { index: i, pdfPage, vp, el, canvas, textLayer, ocrLayer, annotLayer, renderedZoom: 0, task: null };
+      state.pages.push(page);
+      sizePage(page);
+      ui.pages.append(el);
+      attachPageEvents(page);
+      observer.observe(el);
+    }
+    updateButtons();
+    setStatus(`${state.fileName} — ${doc.numPages} page${doc.numPages === 1 ? '' : 's'}`);
+    // Build text layers for every page so the browser's Ctrl+F covers the whole document.
+    state.textReady = (async () => {
+      for (const page of state.pages) {
+        if (token !== state.loadToken) return;
+        await renderTextLayer(page);
+      }
+    })();
+    await state.textReady;
+  }
+
+  function sizePage(page) {
+    page.el.style.width = `${page.vp.width * state.zoom}px`;
+    page.el.style.height = `${page.vp.height * state.zoom}px`;
+    page.el.style.setProperty('--scale-factor', state.zoom);
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) renderCanvas(state.pages[Number(entry.target.dataset.index)]);
+    }
+  }, { root: ui.viewer, rootMargin: '600px 0px' });
+
+  async function renderCanvas(page) {
+    if (!page || page.renderedZoom === state.zoom) return;
+    const zoom = state.zoom;
+    page.renderedZoom = zoom;
+    if (page.task) page.task.cancel();
+    const dpr = window.devicePixelRatio || 1;
+    const viewport = page.pdfPage.getViewport({ scale: zoom * dpr });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    page.task = page.pdfPage.render({ canvasContext: canvas.getContext('2d'), viewport });
+    try {
+      await page.task.promise;
+      page.canvas.replaceWith(canvas);
+      page.canvas = canvas;
+    } catch (err) {
+      if (err?.name !== 'RenderingCancelledException') console.error(err);
+      if (page.renderedZoom === zoom) page.renderedZoom = 0;
+    } finally {
+      page.task = null;
+    }
+  }
+
+  async function renderTextLayer(page) {
+    try {
+      const content = await page.pdfPage.getTextContent();
+      page.charCount = content.items.reduce((n, it) => n + (it.str ? it.str.replace(/\s/g, '').length : 0), 0);
+      const layer = new state.pdfjs.TextLayer({
+        textContentSource: content,
+        container: page.textLayer,
+        viewport: page.vp,
+      });
+      await layer.render();
+      page.textLayer.addEventListener('mousedown', () => page.textLayer.classList.add('selecting'));
+    } catch (err) {
+      console.error('Text layer failed for page', page.index + 1, err);
+      page.charCount = page.charCount || 0;
+    }
+  }
+
+  document.addEventListener('mouseup', () => {
+    document.querySelectorAll('.textLayer.selecting').forEach((el) => el.classList.remove('selecting'));
+  });
+
+  // ----------------------------------------------------------------- zoom
+
+  function setZoom(zoom) {
+    if (!state.doc) return;
+    zoom = Math.min(5, Math.max(0.25, zoom));
+    if (Math.abs(zoom - state.zoom) < 1e-3) return;
+    finishEditing();
+    // Keep the same spot in the document in view.
+    const v = ui.viewer;
+    const relY = (v.scrollTop + v.clientHeight / 2) / v.scrollHeight;
+    state.zoom = zoom;
+    for (const page of state.pages) {
+      sizePage(page);
+      drawAnnots(page);
+      drawOcrLayer(page);
+    }
+    v.scrollTop = relY * v.scrollHeight - v.clientHeight / 2;
+    for (const page of state.pages) {
+      const r = page.el.getBoundingClientRect();
+      const vr = v.getBoundingClientRect();
+      if (r.bottom > vr.top - 600 && r.top < vr.bottom + 600) renderCanvas(page);
+    }
+    updateButtons();
+  }
+
+  function zoomStep(dir) {
+    const z = state.zoom;
+    const next = dir > 0 ? ZOOM_STEPS.find((s) => s > z + 1e-3) : [...ZOOM_STEPS].reverse().find((s) => s < z - 1e-3);
+    if (next) setZoom(next);
+  }
+
+  function zoomFit() {
+    if (!state.pages.length) return;
+    const widest = Math.max(...state.pages.map((p) => p.vp.width));
+    setZoom((ui.viewer.clientWidth - 48) / widest);
+  }
+
+  // ------------------------------------------------------- annotation view
+
+  function drawAnnots(page) {
+    const layer = page.annotLayer;
+    layer.textContent = '';
+    for (const a of state.annots) {
+      if (a.page === page.index) layer.append(createAnnotEl(a));
+    }
+  }
+
+  function redrawPageOf(annot) {
+    const page = state.pages[annot.page];
+    if (page) drawAnnots(page);
+  }
+
+  function createAnnotEl(a) {
+    const z = state.zoom;
+    let el;
+    if (a.type === 'ink') {
+      el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      const xs = a.points.map((p) => p[0]);
+      const ys = a.points.map((p) => p[1]);
+      const pad = a.width;
+      const minX = Math.min(...xs) - pad;
+      const minY = Math.min(...ys) - pad;
+      const w = Math.max(...xs) + pad - minX;
+      const h = Math.max(...ys) + pad - minY;
+      el.setAttribute('class', 'annot ink');
+      el.setAttribute('viewBox', `${minX} ${minY} ${w} ${h}`);
+      Object.assign(el.style, { left: `${minX * z}px`, top: `${minY * z}px`, width: `${w * z}px`, height: `${h * z}px` });
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      path.setAttribute('points', a.points.map((p) => p.join(',')).join(' '));
+      path.setAttribute('fill', 'none');
+      path.setAttribute('stroke', a.color);
+      path.setAttribute('stroke-width', a.width);
+      path.setAttribute('stroke-linecap', 'round');
+      path.setAttribute('stroke-linejoin', 'round');
+      el.append(path);
+    } else {
+      el = document.createElement('div');
+      el.style.left = `${a.x * z}px`;
+      el.style.top = `${a.y * z}px`;
+      if (a.type === 'text') {
+        el.className = 'annot txt';
+        el.textContent = a.text;
+        el.style.fontSize = `${a.size * z}px`;
+        el.style.color = a.color;
+      } else {
+        el.className = `annot ${a.type === 'highlight' ? 'hl' : 'wo'}`;
+        el.style.width = `${a.w * z}px`;
+        el.style.height = `${a.h * z}px`;
+        el.style.background = a.color;
+      }
+    }
+    el.dataset.id = a.id;
+    if (a.id === state.selectedId) el.classList.add('selected');
+    return el;
+  }
+
+  function annotEl(id) {
+    return ui.pages.querySelector(`.annot[data-id="${id}"]`);
+  }
+
+  function select(id) {
+    if (state.selectedId === id) return;
+    if (state.selectedId != null) annotEl(state.selectedId)?.classList.remove('selected');
+    state.selectedId = id;
+    if (id != null) {
+      annotEl(id)?.classList.add('selected');
+      const a = getAnnot(id);
+      if (a) {
+        ui.colorInput.value = a.color;
+        if (a.type === 'text') ui.sizeInput.value = String(a.size);
+      }
+    }
+    updateButtons();
+  }
+
+  function deleteSelected() {
+    const a = getAnnot(state.selectedId);
+    if (!a) return;
+    if (state.editingId === a.id) state.editingId = null;
+    checkpoint();
+    state.annots = state.annots.filter((x) => x !== a);
+    state.selectedId = null;
+    redrawPageOf(a);
+    updateButtons();
+  }
+
+  function addAnnot(a) {
+    checkpoint();
+    a.id = state.nextId++;
+    state.annots.push(a);
+    redrawPageOf(a);
+    return a;
+  }
+
+  // -------------------------------------------------------- text editing
+
+  function startEditing(id, caretAtEnd = true) {
+    finishEditing();
+    const a = getAnnot(id);
+    const el = annotEl(id);
+    if (!a || !el) return;
+    select(id);
+    state.editingId = id;
+    state.editStart = a.text;
+    el.classList.add('editing');
+    try {
+      el.contentEditable = 'plaintext-only';
+    } catch {
+      el.contentEditable = 'true';
+    }
+    el.spellcheck = false;
+    el.focus();
+    if (caretAtEnd) {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    el.addEventListener('input', () => {
+      a.text = el.innerText.replace(/\n$/, '');
+    });
+    el.addEventListener('paste', (e) => {
+      e.preventDefault();
+      document.execCommand('insertText', false, e.clipboardData.getData('text/plain'));
+    });
+    el.addEventListener('blur', () => finishEditing(), { once: true });
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        el.blur();
+      }
+      e.stopPropagation();
+    });
+  }
+
+  function finishEditing() {
+    const id = state.editingId;
+    if (id == null) return;
+    state.editingId = null;
+    const a = getAnnot(id);
+    if (!a) return;
+    const el = annotEl(id);
+    if (el) a.text = el.innerText.replace(/\n$/, '');
+    if (!a.text.trim()) {
+      // Empty text box: drop it, and drop the undo step that created it.
+      state.annots = state.annots.filter((x) => x !== a);
+      if (a.isNew) state.undo.pop();
+      state.selectedId = null;
+    } else if (!a.isNew && a.text !== state.editStart) {
+      const now = a.text;
+      a.text = state.editStart;
+      checkpoint();
+      a.text = now;
+    }
+    delete a.isNew;
+    redrawPageOf(a);
+    updateButtons();
+  }
+
+  // -------------------------------------------------------- pointer input
+
+  function attachPageEvents(page) {
+    const layer = page.annotLayer;
+    let drag = null;
+
+    layer.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const target = e.target.closest('.annot');
+      const id = target ? Number(target.dataset.id) : null;
+      if (id != null && id === state.editingId) return; // clicks inside the box being edited
+      const pt = pointInPage(page, e);
+      const tool = state.tool;
+
+      if (tool === 'select') {
+        if (id == null) return;
+        e.preventDefault();
+        finishEditing();
+        select(id);
+        const a = getAnnot(id);
+        drag = { kind: 'move', a, start: pt, orig: JSON.stringify(a), moved: false };
+      } else if (tool === 'text') {
+        e.preventDefault();
+        if (id != null && getAnnot(id)?.type === 'text') {
+          startEditing(id);
+          return;
+        }
+        finishEditing();
+        const size = state.fontSize;
+        const a = addAnnot({
+          page: page.index, type: 'text', text: '',
+          x: pt.x - TEXT_PADDING, y: pt.y - size * TEXT_LINE_HEIGHT / 2 - TEXT_PADDING,
+          size, color: state.colors.text, isNew: true,
+        });
+        startEditing(a.id);
+        return;
+      } else if (tool === 'highlight' || tool === 'whiteout') {
+        e.preventDefault();
+        finishEditing();
+        select(null);
+        const el = document.createElement('div');
+        el.className = `annot draft ${tool === 'highlight' ? 'hl' : 'wo'}`;
+        el.style.background = state.colors[tool];
+        if (tool === 'whiteout') el.style.outline = '1px dashed #999';
+        layer.append(el);
+        drag = { kind: 'rect', tool, start: pt, el, cur: pt };
+      } else if (tool === 'draw') {
+        e.preventDefault();
+        finishEditing();
+        select(null);
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'annot draft ink');
+        Object.assign(svg.style, { left: 0, top: 0, width: '100%', height: '100%' });
+        svg.setAttribute('viewBox', `0 0 ${page.vp.width} ${page.vp.height}`);
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke', state.colors.draw);
+        line.setAttribute('stroke-width', INK_WIDTH);
+        line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('stroke-linejoin', 'round');
+        svg.append(line);
+        layer.append(svg);
+        drag = { kind: 'ink', points: [[round(pt.x), round(pt.y)]], svg, line };
+      }
+      if (drag) layer.setPointerCapture(e.pointerId);
+    });
+
+    layer.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const pt = pointInPage(page, e);
+      if (drag.kind === 'move') {
+        const dx = pt.x - drag.start.x;
+        const dy = pt.y - drag.start.y;
+        if (!drag.moved && Math.hypot(dx, dy) < 2 / state.zoom) return;
+        if (!drag.moved) {
+          drag.moved = true;
+          checkpoint();
+          drag.base = JSON.parse(drag.orig);
+        }
+        moveAnnot(drag.a, drag.base, dx, dy);
+        const el = annotEl(drag.a.id);
+        if (el) el.replaceWith(createAnnotEl(drag.a));
+      } else if (drag.kind === 'rect') {
+        drag.cur = pt;
+        const r = normRect(drag.start, pt);
+        const z = state.zoom;
+        Object.assign(drag.el.style, { left: `${r.x * z}px`, top: `${r.y * z}px`, width: `${r.w * z}px`, height: `${r.h * z}px` });
+      } else if (drag.kind === 'ink') {
+        drag.points.push([round(pt.x), round(pt.y)]);
+        drag.line.setAttribute('points', drag.points.map((p) => p.join(',')).join(' '));
+      }
+    });
+
+    const end = (e) => {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      if (layer.hasPointerCapture(e.pointerId)) layer.releasePointerCapture(e.pointerId);
+      if (d.kind === 'move') {
+        const a = d.a;
+        if (!d.moved && a.type === 'text' && e.detail >= 2) startEditing(a.id);
+      } else if (d.kind === 'rect') {
+        d.el.remove();
+        const r = normRect(d.start, d.cur);
+        if (r.w > 2 && r.h > 2) {
+          addAnnot({ page: page.index, type: d.tool, ...r, color: state.colors[d.tool] });
+        }
+      } else if (d.kind === 'ink') {
+        d.svg.remove();
+        if (e.type !== 'pointercancel') {
+          addAnnot({ page: page.index, type: 'ink', points: d.points, color: state.colors.draw, width: INK_WIDTH });
+        }
+      }
+    };
+    layer.addEventListener('pointerup', end);
+    layer.addEventListener('pointercancel', end);
+
+    // Stop the browser from moving focus / starting a text selection when we
+    // handle the press ourselves (otherwise a new text box would lose focus).
+    layer.addEventListener('mousedown', (e) => {
+      const target = e.target.closest('.annot');
+      if (target && Number(target.dataset.id) === state.editingId) return;
+      if (state.tool !== 'select' || target) e.preventDefault();
+    });
+
+    layer.addEventListener('dblclick', (e) => {
+      const target = e.target.closest('.annot.txt');
+      if (target && state.tool === 'select') startEditing(Number(target.dataset.id));
+    });
+  }
+
+  function round(n) {
+    return Math.round(n * 100) / 100;
+  }
+
+  function normRect(a, b) {
+    return {
+      x: Math.min(a.x, b.x), y: Math.min(a.y, b.y),
+      w: Math.abs(a.x - b.x), h: Math.abs(a.y - b.y),
+    };
+  }
+
+  function moveAnnot(a, base, dx, dy) {
+    if (a.type === 'ink') {
+      a.points = base.points.map(([x, y]) => [round(x + dx), round(y + dy)]);
+    } else {
+      a.x = base.x + dx;
+      a.y = base.y + dy;
+    }
+  }
+
+  // Clicking empty page space in select mode deselects.
+  ui.pages.addEventListener('pointerdown', (e) => {
+    if (state.tool === 'select' && !e.target.closest('.annot')) select(null);
+  });
+
+  // Highlights let clicks through so the text under them stays selectable;
+  // a plain click (no text selected) on a highlight selects it instead.
+  ui.pages.addEventListener('click', (e) => {
+    if (state.tool !== 'select' || e.target.closest('.annot')) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed) return;
+    const page = pageAt(e.target);
+    if (!page) return;
+    const pt = pointInPage(page, e);
+    const hit = state.annots.filter((a) => a.page === page.index && a.type === 'highlight' &&
+      pt.x >= a.x && pt.x <= a.x + a.w && pt.y >= a.y && pt.y <= a.y + a.h).pop();
+    if (hit) select(hit.id);
+  });
+
+  // ------------------------------------------------ highlight selected text
+
+  function highlightSelection() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return false;
+    const rectsByPage = new Map();
+    for (let i = 0; i < sel.rangeCount; i++) {
+      for (const r of sel.getRangeAt(i).getClientRects()) {
+        if (r.width < 1 || r.height < 1) continue;
+        const cx = r.left + r.width / 2;
+        const cy = r.top + r.height / 2;
+        const page = state.pages.find((p) => {
+          const pr = p.el.getBoundingClientRect();
+          return cx >= pr.left && cx <= pr.right && cy >= pr.top && cy <= pr.bottom;
+        });
+        if (!page) continue;
+        const pr = page.el.getBoundingClientRect();
+        const z = state.zoom;
+        const rect = { x: (r.left - pr.left) / z, y: (r.top - pr.top) / z, w: r.width / z, h: r.height / z };
+        if (!rectsByPage.has(page.index)) rectsByPage.set(page.index, []);
+        rectsByPage.get(page.index).push(rect);
+      }
+    }
+    if (!rectsByPage.size) return false;
+    checkpoint();
+    for (const [index, rects] of rectsByPage) {
+      for (const r of mergeLineRects(rects)) {
+        state.annots.push({ id: state.nextId++, page: index, type: 'highlight', ...r, color: state.colors.highlight });
+      }
+      drawAnnots(state.pages[index]);
+    }
+    sel.removeAllRanges();
+    setStatus('Highlighted selected text.');
+    return true;
+  }
+
+  // Merge rectangles that sit on the same line and touch, so overlapping
+  // highlights don't stack into darker patches.
+  function mergeLineRects(rects) {
+    rects.sort((a, b) => a.y - b.y || a.x - b.x);
+    const out = [];
+    for (const r of rects) {
+      const last = out[out.length - 1];
+      const sameLine = last && Math.abs((last.y + last.h / 2) - (r.y + r.h / 2)) < Math.min(last.h, r.h) * 0.5;
+      if (sameLine && r.x <= last.x + last.w + 2) {
+        const x2 = Math.max(last.x + last.w, r.x + r.w);
+        const y1 = Math.min(last.y, r.y);
+        const y2 = Math.max(last.y + last.h, r.y + r.h);
+        last.x = Math.min(last.x, r.x);
+        last.w = x2 - last.x;
+        last.y = y1;
+        last.h = y2 - y1;
+      } else {
+        out.push({ ...r });
+      }
+    }
+    return out;
+  }
+
+  // ------------------------------------------------------------- tools
+
+  function setTool(tool) {
+    if (tool === 'highlight' && state.tool === 'select' && highlightSelection()) return;
+    finishEditing();
+    state.tool = tool;
+    document.body.dataset.tool = tool;
+    ui.toolButtons.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
+    if (tool !== 'select') select(null);
+    ui.colorInput.value = state.colors[tool];
+  }
+
+  ui.toolButtons.forEach((btn) => {
+    // Keep any text selection alive so "select text, then Highlight" works.
+    btn.addEventListener('mousedown', (e) => e.preventDefault());
+    btn.addEventListener('click', () => setTool(btn.dataset.tool));
+  });
+
+  ui.colorInput.addEventListener('input', () => {
+    const color = ui.colorInput.value;
+    const a = getAnnot(state.selectedId);
+    if (a && state.tool === 'select') {
+      a.color = color;
+      const el = annotEl(a.id);
+      if (el) el.replaceWith(createAnnotEl(a));
+    } else {
+      state.colors[state.tool] = color;
+    }
+  });
+  ui.colorInput.addEventListener('change', () => {
+    const a = getAnnot(state.selectedId);
+    if (a && state.tool === 'select') {
+      const now = a.color;
+      a.color = state.colorBefore ?? now;
+      checkpoint();
+      a.color = now;
+      state.colors[a.type === 'ink' ? 'draw' : a.type] = now;
+    }
+    state.colorBefore = undefined;
+  });
+  ui.colorInput.addEventListener('focus', () => {
+    state.colorBefore = getAnnot(state.selectedId)?.color;
+  });
+  ui.colorInput.addEventListener('click', () => {
+    state.colorBefore = getAnnot(state.selectedId)?.color;
+  });
+
+  ui.sizeInput.addEventListener('change', () => {
+    state.fontSize = Number(ui.sizeInput.value);
+    const a = getAnnot(state.selectedId);
+    if (a && a.type === 'text') {
+      const editing = state.editingId === a.id;
+      if (editing) finishEditing();
+      checkpoint();
+      a.size = state.fontSize;
+      redrawPageOf(a);
+      if (editing) startEditing(a.id);
+    }
+  });
+
+  // ------------------------------------------------------------- OCR
+
+  async function runOcr() {
+    if (!state.doc || state.busy) return;
+    finishEditing();
+    if (state.textReady) {
+      setStatus('Checking which pages need text recognition…');
+      await state.textReady;
+    }
+    let targets = state.pages.filter((p) => (p.charCount ?? 0) < MIN_CHARS_FOR_TEXT_PAGE && !state.ocr[p.index]);
+    if (!targets.length) {
+      const again = confirm(
+        'Every page already has searchable text, so Ctrl+F should already work.\n\n' +
+        'Run text recognition (OCR) on all pages anyway? Use this if searching still misses words.');
+      if (!again) return;
+      targets = state.pages;
+    }
+    if (typeof Tesseract === 'undefined') {
+      alert('The OCR engine could not be loaded. Check your internet connection and reload the page.');
+      return;
+    }
+
+    state.busy = true;
+    updateButtons();
+    let worker;
+    const before = snapshot();
+    let done = 0;
+    try {
+      setStatus('Loading text recognition engine (first time can take a little while)…');
+      setProgress(0);
+      worker = await Tesseract.createWorker('eng', 1, {
+        workerPath: CDN.tessWorker,
+        corePath: CDN.tessCore,
+        langPath: CDN.tessLang,
+        logger: (m) => {
+          if (m.status === 'recognizing text') setProgress((done + m.progress) / targets.length);
+        },
+      });
+      for (const page of targets) {
+        setStatus(`Recognizing text on page ${page.index + 1} (${done + 1} of ${targets.length})…`);
+        const words = await ocrPage(worker, page);
+        state.ocr[page.index] = words;
+        drawOcrLayer(page);
+        done++;
+        setProgress(done / targets.length);
+      }
+      state.undo.push(before);
+      state.redo = [];
+      state.dirty = true;
+      const total = targets.reduce((n, p) => n + (state.ocr[p.index]?.length || 0), 0);
+      setStatus(`OCR finished: found ${total} words on ${targets.length} page${targets.length === 1 ? '' : 's'}. ` +
+        'Click Save to download a searchable PDF.');
+    } catch (err) {
+      console.error(err);
+      if (done) {
+        state.undo.push(before);
+        state.dirty = true;
+      }
+      setStatus(`OCR failed: ${err.message || err}`);
+    } finally {
+      if (worker) await worker.terminate().catch(() => {});
+      state.busy = false;
+      setProgress(null);
+      updateButtons();
+    }
+  }
+
+  async function ocrPage(worker, page) {
+    const base = page.vp;
+    const scale = Math.min(OCR_DPI / 72, OCR_MAX_CANVAS / Math.max(base.width, base.height));
+    const viewport = page.pdfPage.getViewport({ scale });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.floor(viewport.width);
+    canvas.height = Math.floor(viewport.height);
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await page.pdfPage.render({ canvasContext: ctx, viewport }).promise;
+
+    const { data } = await worker.recognize(canvas);
+    const words = [];
+    for (const line of data.lines || []) {
+      const lineTop = line.bbox.y0;
+      for (const w of line.words || []) {
+        const text = (w.text || '').trim();
+        if (!text || w.confidence < 15) continue;
+        const b = w.bbox;
+        let baseline = b.y1;
+        if (w.baseline && w.baseline.has_baseline !== false && Number.isFinite(w.baseline.y0)) {
+          // Baseline is a line through the word; take its height at the word's midpoint.
+          const { x0, y0, x1, y1 } = w.baseline;
+          const mid = (b.x0 + b.x1) / 2;
+          baseline = x1 !== x0 ? y0 + ((y1 - y0) * (mid - x0)) / (x1 - x0) : (y0 + y1) / 2;
+          if (baseline < b.y0 || baseline > b.y1) baseline = b.y1;
+        }
+        const top = Math.min(lineTop, b.y0);
+        words.push({
+          text,
+          x: round(b.x0 / scale),
+          w: round((b.x1 - b.x0) / scale),
+          baseline: round(baseline / scale),
+          // Ascender height ≈ 0.72 of the font size for typical Latin fonts.
+          size: round(Math.max(2, (baseline - top) / scale / 0.72)),
+        });
+      }
+    }
+    canvas.width = canvas.height = 0;
+    return words;
+  }
+
+  const measureCtx = document.createElement('canvas').getContext('2d');
+
+  function drawOcrLayer(page) {
+    const layer = page.ocrLayer;
+    layer.textContent = '';
+    const words = state.ocr[page.index];
+    if (!words) return;
+    const z = state.zoom;
+    const frag = document.createDocumentFragment();
+    for (const w of words) {
+      const span = document.createElement('span');
+      span.textContent = `${w.text} `;
+      const size = w.size * z;
+      measureCtx.font = `${size}px ${FONT_FAMILY}`;
+      const natural = measureCtx.measureText(w.text).width || 1;
+      span.style.left = `${w.x * z}px`;
+      span.style.top = `${(w.baseline - w.size * 0.8) * z}px`;
+      span.style.fontSize = `${size}px`;
+      span.style.transform = `scaleX(${(w.w * z) / natural})`;
+      frag.append(span);
+    }
+    layer.append(frag);
+  }
+
+  // ------------------------------------------------------------- saving
+
+  // The built-in PDF font only covers Latin characters (WinAnsi). Replace
+  // anything it can't encode so saving never fails.
+  function makeSanitizer(font) {
+    const ok = new Map();
+    const swaps = { '‘': "'", '’': "'", '“': '"', '”': '"', '–': '-', '—': '-', '…': '...', '\t': '    ' };
+    return (str) => {
+      let out = '';
+      for (const ch of str) {
+        const c = swaps[ch] ?? ch;
+        if (!ok.has(c)) {
+          let good = true;
+          try {
+            font.encodeText(c);
+            font.widthOfTextAtSize(c, 10);
+          } catch {
+            good = false;
+          }
+          ok.set(c, good);
+        }
+        out += ok.get(c) ? c : '?';
+      }
+      return out;
+    };
+  }
+
+  async function save() {
+    if (!state.doc || state.busy) return;
+    finishEditing();
+    const L = PDFLib;
+    state.busy = true;
+    updateButtons();
+    setStatus('Saving…');
+    try {
+      let out;
+      try {
+        out = await L.PDFDocument.load(state.bytes);
+      } catch (err) {
+        if (/encrypt/i.test(err.message)) {
+          throw new Error('this PDF is encrypted/protected, and saving changes to protected PDFs is not supported. ' +
+            'Try "Print → Save as PDF" in your browser to make an unprotected copy first.');
+        }
+        throw err;
+      }
+      const font = await out.embedFont(L.StandardFonts.Helvetica);
+      const clean = makeSanitizer(font);
+      const pdfPages = out.getPages();
+
+      for (const page of state.pages) {
+        const annots = state.annots.filter((a) => a.page === page.index);
+        const words = state.ocr[page.index] || [];
+        if (!annots.length && !words.length) continue;
+        const target = pdfPages[page.index];
+        // Wrap the existing content in q/Q so its graphics state can't skew our additions.
+        target.translateContent(0, 0);
+        const vp = page.vp;
+        const rot = vp.rotation;
+        const toPdf = (x, y) => vp.convertToPdfPoint(x, y);
+        const rectToPdf = (a) => {
+          const [x1, y1] = toPdf(a.x, a.y);
+          const [x2, y2] = toPdf(a.x + a.w, a.y + a.h);
+          return { x: Math.min(x1, x2), y: Math.min(y1, y2), width: Math.abs(x2 - x1), height: Math.abs(y2 - y1) };
+        };
+
+        if (words.length) writeInvisibleText(target, font, clean, words, toPdf, rot);
+
+        for (const a of annots) {
+          if (a.type === 'highlight') {
+            target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color), opacity: HIGHLIGHT_OPACITY, blendMode: L.BlendMode.Multiply });
+          } else if (a.type === 'whiteout') {
+            target.drawRectangle({ ...rectToPdf(a), color: hexToRgb(a.color) });
+          } else if (a.type === 'text') {
+            const lines = a.text.split('\n');
+            lines.forEach((line, i) => {
+              if (!line) return;
+              const bx = a.x + TEXT_PADDING;
+              const by = a.y + TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * i + a.size * BASELINE_RATIO;
+              const [x, y] = toPdf(bx, by);
+              target.drawText(clean(line), { x, y, size: a.size, font, color: hexToRgb(a.color), rotate: L.degrees(rot) });
+            });
+          } else if (a.type === 'ink') {
+            const color = hexToRgb(a.color);
+            const pts = a.points.map(([x, y]) => toPdf(x, y));
+            if (pts.length === 1) {
+              target.drawCircle({ x: pts[0][0], y: pts[0][1], size: a.width / 2, color });
+            }
+            for (let i = 1; i < pts.length; i++) {
+              target.drawLine({
+                start: { x: pts[i - 1][0], y: pts[i - 1][1] },
+                end: { x: pts[i][0], y: pts[i][1] },
+                thickness: a.width, color, lineCap: L.LineCapStyle.Round,
+              });
+            }
+          }
+        }
+      }
+
+      const bytes = await out.save();
+      download(bytes, editedName(state.fileName));
+      state.dirty = false;
+      setStatus(`Saved ${editedName(state.fileName)}.`);
+    } catch (err) {
+      console.error(err);
+      setStatus(`Save failed: ${err.message || err}`);
+      alert(`Save failed: ${err.message || err}`);
+    } finally {
+      state.busy = false;
+      updateButtons();
+    }
+  }
+
+  // OCR text is written with text render mode 3 (invisible): it isn't drawn,
+  // but PDF readers can search, select and copy it — the same technique used
+  // by scanners and tools like OCRmyPDF.
+  function writeInvisibleText(target, font, clean, words, toPdf, rotation) {
+    const L = PDFLib;
+    const fontKey = target.node.newFontDictionary(font.name, font.ref);
+    const rad = (rotation * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const ops = [L.pushGraphicsState(), L.beginText(), L.setTextRenderingMode(L.TextRenderingMode.Invisible)];
+    for (const w of words) {
+      const text = clean(w.text);
+      if (!text.trim()) continue;
+      const natural = font.widthOfTextAtSize(text, w.size);
+      const squeeze = natural > 0 ? Math.max(1, Math.min(1000, (100 * w.w) / natural)) : 100;
+      const [x, y] = toPdf(w.x, w.baseline);
+      ops.push(
+        L.setFontAndSize(fontKey, w.size),
+        L.setCharacterSqueeze(squeeze),
+        L.setTextMatrix(cos, sin, -sin, cos, x, y),
+        L.showText(font.encodeText(text)),
+      );
+    }
+    ops.push(L.endText(), L.popGraphicsState());
+    target.pushOperators(...ops);
+  }
+
+  function editedName(name) {
+    const baseName = name.replace(/\.pdf$/i, '');
+    return `${baseName}-edited.pdf`;
+  }
+
+  function download(bytes, name) {
+    const blob = new Blob([bytes], { type: 'application/pdf' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = name;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  }
+
+  // ------------------------------------------------------------- wiring
+
+  ui.fileInput.addEventListener('change', () => {
+    openFile(ui.fileInput.files[0]);
+    ui.fileInput.value = '';
+  });
+  ui.saveBtn.addEventListener('click', save);
+  ui.ocrBtn.addEventListener('click', runOcr);
+  ui.undoBtn.addEventListener('click', undo);
+  ui.redoBtn.addEventListener('click', redo);
+  ui.deleteBtn.addEventListener('click', deleteSelected);
+  ui.zoomIn.addEventListener('click', () => zoomStep(1));
+  ui.zoomOut.addEventListener('click', () => zoomStep(-1));
+  ui.zoomFit.addEventListener('click', zoomFit);
+
+  ui.viewer.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    ui.viewer.classList.add('dragover');
+  });
+  ui.viewer.addEventListener('dragleave', () => ui.viewer.classList.remove('dragover'));
+  ui.viewer.addEventListener('drop', (e) => {
+    e.preventDefault();
+    ui.viewer.classList.remove('dragover');
+    const file = [...e.dataTransfer.files].find((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (file) openFile(file);
+  });
+
+  const TOOL_KEYS = { v: 'select', t: 'text', h: 'highlight', w: 'whiteout', d: 'draw' };
+
+  document.addEventListener('keydown', (e) => {
+    if (state.editingId != null) return;
+    const inField = e.target.matches('input, select, textarea, [contenteditable]');
+    const mod = e.ctrlKey || e.metaKey;
+    const key = e.key.toLowerCase();
+    if (mod && key === 's') {
+      e.preventDefault();
+      save();
+    } else if (mod && key === 'o') {
+      e.preventDefault();
+      ui.fileInput.click();
+    } else if (inField) {
+      return;
+    } else if (mod && key === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+    } else if (mod && key === 'y') {
+      e.preventDefault();
+      redo();
+    } else if ((e.key === 'Delete' || e.key === 'Backspace') && state.selectedId != null) {
+      e.preventDefault();
+      deleteSelected();
+    } else if (e.key === 'Escape') {
+      select(null);
+      setTool('select');
+    } else if (!mod && !e.altKey && TOOL_KEYS[key]) {
+      setTool(TOOL_KEYS[key]);
+    } else if (mod && (key === '=' || key === '+')) {
+      e.preventDefault();
+      zoomStep(1);
+    } else if (mod && key === '-') {
+      e.preventDefault();
+      zoomStep(-1);
+    }
+  });
+
+  window.addEventListener('beforeunload', (e) => {
+    if (state.dirty) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+  });
+
+  // Exposed for automated tests / debugging in the console.
+  window.pdfEditor = { state, openFile, save, runOcr, setTool, setZoom };
+
+  updateButtons();
+  if (typeof PDFLib === 'undefined') {
+    setStatus('Could not load the PDF libraries. Check your internet connection and reload.');
+  }
+})();

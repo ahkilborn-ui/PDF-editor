@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PDF Editor</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body data-tool="select">
+  <header class="toolbar">
+    <div class="group">
+      <label class="btn" title="Open a PDF (Ctrl+O)">
+        Open
+        <input id="file-input" type="file" accept="application/pdf,.pdf" hidden>
+      </label>
+      <button id="save-btn" class="btn primary" title="Download the edited PDF (Ctrl+S)" disabled>Save</button>
+    </div>
+
+    <div class="group" role="toolbar" aria-label="Tools">
+      <button class="btn tool active" data-tool="select" title="Select text / move annotations (V)">Select</button>
+      <button class="btn tool" data-tool="text" title="Type text anywhere (T)">Text</button>
+      <button class="btn tool" data-tool="highlight" title="Highlight: drag a box, or select text first and press H (H)">Highlight</button>
+      <button class="btn tool" data-tool="whiteout" title="Cover existing content with a white box (W)">White-out</button>
+      <button class="btn tool" data-tool="draw" title="Freehand pen (D)">Draw</button>
+    </div>
+
+    <div class="group">
+      <label class="field" title="Color for the current tool / selected item">
+        <span>Color</span>
+        <input id="color-input" type="color" value="#ffeb3b">
+      </label>
+      <label class="field" title="Font size for text">
+        <span>Size</span>
+        <select id="size-input">
+          <option>8</option><option>10</option><option>12</option><option selected>14</option>
+          <option>16</option><option>18</option><option>24</option><option>32</option><option>48</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="group">
+      <button id="undo-btn" class="btn" title="Undo (Ctrl+Z)" disabled>Undo</button>
+      <button id="redo-btn" class="btn" title="Redo (Ctrl+Y)" disabled>Redo</button>
+      <button id="delete-btn" class="btn" title="Delete selected item (Delete)" disabled>Delete</button>
+    </div>
+
+    <div class="group">
+      <button id="zoom-out" class="btn" title="Zoom out">−</button>
+      <span id="zoom-label" class="zoom-label">125%</span>
+      <button id="zoom-in" class="btn" title="Zoom in">+</button>
+      <button id="zoom-fit" class="btn" title="Fit page width">Fit</button>
+    </div>
+
+    <div class="group">
+      <button id="ocr-btn" class="btn accent" title="Recognize text in scanned pages so Ctrl+F works" disabled>Make searchable (OCR)</button>
+    </div>
+  </header>
+
+  <main id="viewer">
+    <div id="drop-hint" class="drop-hint">
+      <h1>PDF Editor</h1>
+      <p>Drop a PDF here, or click <strong>Open</strong>.</p>
+      <ul>
+        <li><strong>Text</strong> — click anywhere on a page and type.</li>
+        <li><strong>Highlight</strong> — drag over an area, or select text and press <kbd>H</kbd>.</li>
+        <li><strong>White-out</strong> — cover existing content, then type over it to "edit" it.</li>
+        <li><strong>Make searchable</strong> — reads scanned pages (OCR) so <kbd>Ctrl</kbd>+<kbd>F</kbd> finds their words.</li>
+      </ul>
+      <p class="muted">Everything runs in your browser. Your files are never uploaded.</p>
+    </div>
+    <div id="pages"></div>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status">No document open.</span>
+    <progress id="progress" max="1" value="0" hidden></progress>
+  </footer>
+</body>
+</html>
