@@ -49,10 +49,10 @@
   };
 
   const PALETTE = [
-    '#000000', '#5f6368', '#9aa0a6', '#ffffff',
-    '#e53935', '#fb8c00', '#ffeb3b', '#c6ff00',
-    '#43a047', '#00bfa5', '#00b0ff', '#1e88e5',
-    '#3949ab', '#8e24aa', '#ff4081', '#6d4c41',
+    '#000000', '#5f6368', '#ffffff', '#e53935',
+    '#fb8c00', '#ffeb3b', '#c6ff00', '#43a047',
+    '#00bfa5', '#00b0ff', '#1e88e5', '#3949ab',
+    '#8e24aa', '#ff69b4', '#ffb6c1', '#6d4c41', // hot pink, light pink
   ];
 
   const state = {
