@@ -1531,6 +1531,9 @@
 
     // Presses on the menu and handles are theirs, not the page's (which
     // would start drawing, or deselect).
+    menu.addEventListener('mousedown', (e) => {
+      if (!e.target.closest('input')) e.preventDefault(); // keep typing in the text box
+    });
     for (const el of [menu, box]) {
       for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick']) {
         el.addEventListener(type, (e) => e.stopPropagation());
@@ -1589,7 +1592,7 @@
     const a = items[0] && getAnnot(state.selectedId);
     const page = a && state.pageById.get(a.page);
     const els = items.map((x) => annotEl(x.id)).filter(Boolean);
-    if (!a || !page || !els.length || state.editingId != null || !page.wrap.isConnected) {
+    if (!a || !page || !els.length || !page.wrap.isConnected) {
       menu.hidden = true;
       box.hidden = true;
       return;
@@ -1603,14 +1606,18 @@
     box.classList.toggle('text-box', a.type === 'text');
     if (resizable) {
       const r = itemRect(a);
-      Object.assign(box.style, { left: `${r.x * z}px`, top: `${r.y * z}px`, width: `${r.w * z}px`, height: `${r.h * z}px` });
+      // A text box's handles sit just outside it, clear of the letters.
+      const pad = a.type === 'text' ? 5 : 0;
+      Object.assign(box.style, {
+        left: `${r.x * z - pad}px`, top: `${r.y * z - pad}px`, width: `${r.w * z + 2 * pad}px`, height: `${r.h * z + 2 * pad}px`,
+      });
     }
 
     menu.hidden = selUi.dragging;
     if (menu.hidden) return;
     selUi.fill.hidden = a.type !== 'rect';
     selUi.fillInput.checked = !!a.fill;
-    selUi.edit.hidden = a.type !== 'text';
+    selUi.edit.hidden = a.type !== 'text' || state.editingId === a.id;
     selUi.fill.previousElementSibling.hidden = selUi.fill.hidden && selUi.edit.hidden; // the divider before them
     selUi.custom.value = a.color;
     for (const sw of selUi.swatches.children) sw.classList.toggle('active', sw.dataset.color === a.color.toLowerCase());
@@ -1704,6 +1711,42 @@
 
   // -------------------------------------------------------- text editing
 
+  // Clicked an item: a text box opens for typing, anything else is selected.
+  function selectOrEdit(id, e) {
+    if (getAnnot(id)?.type === 'text') editAt(id, e);
+    else select(id);
+  }
+
+  // Start editing a text box with the caret at the clicked spot.
+  function editAt(id, e) {
+    startEditing(id, false);
+    const el = annotEl(id);
+    if (!el || state.editingId !== id) return;
+    let range = null;
+    selUi.box.style.visibility = 'hidden'; // look at the text, not the handles over it
+    if (document.caretRangeFromPoint) {
+      range = document.caretRangeFromPoint(e.clientX, e.clientY);
+    } else if (document.caretPositionFromPoint) {
+      const pos = document.caretPositionFromPoint(e.clientX, e.clientY);
+      if (pos) {
+        range = document.createRange();
+        range.setStart(pos.offsetNode, pos.offset);
+      }
+    }
+    selUi.box.style.visibility = '';
+    if (range && el.contains(range.startContainer)) {
+      range.collapse(true);
+    } else {
+      // Clicked just outside the letters: caret at the end.
+      range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+    }
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+
   function startEditing(id, caretAtEnd = true) {
     finishEditing();
     const a = getAnnot(id);
@@ -1732,6 +1775,7 @@
     el.addEventListener('input', () => {
       a.text = el.innerText.replace(/\n$/, '');
       scheduleThumbOverlay(a.page); // the page viewer shows the text as it's typed
+      updateSelectionUi();
     });
     el.addEventListener('paste', (e) => {
       e.preventDefault();
@@ -1808,11 +1852,13 @@
         const items = selectedItems();
         drag = { kind: 'move', items, start: pt, orig: JSON.stringify(items), moved: false };
       } else if (tool === 'text') {
-        e.preventDefault();
         if (id != null && getAnnot(id)?.type === 'text') {
-          startEditing(id);
+          // Into the existing box: the browser puts the caret where it was
+          // clicked, and dragging selects its text.
+          startEditing(id, false);
           return;
         }
+        e.preventDefault();
         finishEditing();
         const size = state.fontSize;
         const a = addAnnot({
@@ -1905,16 +1951,21 @@
       const isClick = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 3 / state.zoom;
       if (d.kind === 'move') {
         selUi.dragging = false;
-        updateSelectionUi();
+        // A click (no drag) on a text box goes into it, caret where clicked.
+        if (!d.moved && e.type === 'pointerup' && d.items.length === 1 && d.items[0].type === 'text') {
+          editAt(d.items[0].id, e);
+        } else {
+          updateSelectionUi();
+        }
       } else if (d.kind === 'textHighlight') {
         showHighlightDrafts(page, d, []);
-        if (d.hitId != null && isClick(d.start, d.last)) select(d.hitId);
+        if (d.hitId != null && isClick(d.start, d.last)) selectOrEdit(d.hitId, e);
         else if (d.moved && e.type !== 'pointercancel') addHighlights(page, textSelectionRects(page, d.anchor, d.focus));
       } else if (d.kind === 'rect') {
         d.el.remove();
         const r = normRect(d.start, d.cur);
         if (d.hitId != null && isClick(d.start, d.cur)) {
-          select(d.hitId);
+          selectOrEdit(d.hitId, e);
         } else if (r.w > 2 && r.h > 2) {
           const a = { page: page.id, type: d.tool, ...r, color: state.colors[d.tool] };
           if (d.tool === 'rect') Object.assign(a, { width: state.lineWidth, fill: state.rectFill });
@@ -1924,7 +1975,7 @@
         d.svg.remove();
         const [x0, y0] = d.points[0];
         if (d.hitId != null && d.points.every(([x, y]) => isClick({ x: x0, y: y0 }, { x, y }))) {
-          select(d.hitId);
+          selectOrEdit(d.hitId, e);
         } else if (e.type !== 'pointercancel') {
           addAnnot({ page: page.id, type: 'ink', points: d.points, color: state.colors.draw, width: state.lineWidth });
         }
@@ -1953,7 +2004,7 @@
       }
       if (state.tool !== 'select') return;
       const target = document.elementsFromPoint(e.clientX, e.clientY).find((el) => el.matches('.annot.txt'));
-      if (target) startEditing(Number(target.dataset.id));
+      if (target && Number(target.dataset.id) !== state.editingId) editAt(Number(target.dataset.id), e);
     });
   }
 

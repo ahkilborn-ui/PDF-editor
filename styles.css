@@ -385,6 +385,8 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   outline: none;
   min-width: 4px;
 }
+/* The text box being typed in takes clicks and drags (caret, selecting) whatever the tool. */
+body .annot.txt.editing { pointer-events: auto; cursor: text; }
 .annot.txt.editing {
   background: rgba(255, 255, 255, .6);
   box-shadow: 0 0 0 1px var(--select);

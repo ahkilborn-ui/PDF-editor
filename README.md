@@ -79,13 +79,14 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 
 | Tool | Key | What it does |
 |---|---|---|
-| Select | <kbd>V</kbd> | Select and copy text. Click an item you added to select it, drag to move it, double-click text to edit it. |
+| Select | <kbd>V</kbd> | Select and copy text. Click an item you added to select it, drag to move it. Click a text box to type in it again. |
 | Text | <kbd>T</kbd> | Click where you want the text and start typing. <kbd>Enter</kbd> starts a new line, <kbd>Esc</kbd> finishes. |
 | Highlight | <kbd>H</kbd> | Drag across text to highlight exactly the letters you drag over, like a highlighter pen. You don't need to hit the letters exactly: when the cursor shows a text I-beam, you're close enough. The highlight follows the line nearest your cursor and stays in the column you're working in. Double-click a word to highlight just that word. Where the cursor is a crosshair, such as over a picture or a scan, dragging highlights a box. |
 | White-out | <kbd>W</kbd> | Drag to cover content with a solid box. White by default, but you can change the color. |
 | Rectangle | <kbd>R</kbd> | Drag to draw a box. Tick **Fill** for a solid box. **Line** sets the border thickness. |
 | Draw | <kbd>D</kbd> | Freehand pen. **Line** sets the thickness. |
 
+- **Edit a text box again**: click it, with any tool, and the cursor goes where you clicked. Drag across its words to select them, or double-click a word. To move the box instead, drag it.
 - **Change or delete something you added**: click it, with any tool. A small menu pops up above it with colors (and **Custom** for any color), **Fill** for rectangles, **Edit text** for text boxes, and **Delete**. A highlight that runs over several lines is selected, recolored and deleted as one. Drag the selected item to move it.
 - **Resize**: a selected rectangle, white-out box, highlight or text box has small square handles on its corners and edges. Drag one to change the size and shape. Dragging a text box's handles turns it into a box its text wraps inside. The size is kept when you save and reopen.
 - **Colors**, **Text size**, **Line** and **Fill** in the toolbar apply to the current tool, or to the selected item.
