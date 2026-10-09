@@ -11,7 +11,7 @@ It can:
 - **Draw** freehand.
 - **Any color** for text, highlights, rectangles and drawing. Pick one of the 16 quick colors, or use **Custom** to choose any color from the full spectrum (or type a hex/RGB value).
 - **Convert photos and Word files to PDF**: open iPhone photos (HEIC), JPG, PNG and other images, or Word `.docx` files, and they become PDF pages you can edit, merge and save.
-- **Merge**: open several files at once, or use **Add files** to add more to the end. You can mix PDFs, photos and Word files.
+- **Merge**: a merge window where you add files, put them in order and combine them into one PDF. You can mix PDFs, photos and Word files.
 - **Page viewer**: a panel showing every page, where you can tick pages to delete or rotate, delete a range (for example pages 3 to 7), rotate pages, or drag them into a new order.
 - **Make searchable (OCR)**: reads the words on scanned pages so <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>⌘</kbd>+<kbd>F</kbd> on Mac) can find them, both in the editor and in the saved file in any PDF reader.
 
@@ -66,7 +66,7 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 
 ## How to use it
 
-1. Click **Open** (or drag files onto the window). You can open PDFs, photos or Word `.docx` files. To merge, select several files at once, or click **Add files** afterward.
+1. The start screen (shown whenever no document is open) offers **Open a file** and **Merge files**. You can also drag one file onto the window to open it. PDFs, photos and Word `.docx` files all work. **Close** in the toolbar puts the document away and brings the start screen back (it asks first if there are unsaved changes).
 2. Pick a tool and edit.
 3. Click **Save** (or press <kbd>Ctrl</kbd>+<kbd>S</kbd>). Saving works like Adobe Acrobat:
    - Your changes are saved into the PDF you opened. The first time, Chrome asks **"Allow this site to save changes to *file.pdf*?"**, so click **Allow**.
@@ -128,7 +128,13 @@ You'll still see a red **Not saved** popup if you close the save window without 
 
 ### Merging, deleting and reordering pages
 
-- **Merge**: choose several files in **Open**, or click **Add files** to add more PDFs, photos or Word files to the end. You can also drop files onto the window; if a document is already open, they're added to the end.
+- **Merge**: click **Merge files** on the start screen, or **Add files** in the toolbar to merge more files into the open document. The merge window opens:
+  - Drag files into it, or click **Browse for files…**. Password-protected PDFs ask for their password as you add them.
+  - Each file shows a preview, its name and its page count. Drag the files up and down (or use **↑ ↓**) to set the order, and **×** to take one out. The open document is listed too, so you can put the new files before or after it.
+  - Adding the same file twice is allowed; it's marked **Already in the list**.
+  - Click **Merge N files** when you're done. **Cancel** or <kbd>Esc</kbd> asks before throwing away the files you added.
+  - Dropping several files onto the window, or files onto an open document, opens the merge window with them.
+  - The first Ctrl+S of a new merged document asks where to save it.
 - **Page viewer**: click **Page viewer** in the toolbar to open a panel on the right with every page in order. In the panel:
   - **Delete pages**: tick the check box in the top-left corner of each page you want to remove. A **Delete pages** button drops down at the top of the panel. Click it, then **Yes** to confirm, or **No** to keep them. **Clear** unticks everything.
   - **Delete range of pages…**: type the first and last page numbers, for example 3 to 7, then click **Delete pages**. Click **Yes** to delete them, or **No** to go back and change the numbers.

@@ -9,12 +9,12 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <script>window.PDF_EDITOR_LIB_BASE = 'vendor/';</script>
   <link rel="icon" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="styles.css?v=e8830cbf7e">
+  <link rel="stylesheet" href="styles.css?v=5277950162">
   <script src="vendor/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="vendor/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
-  <script src="convert.js?v=e8830cbf7e" defer></script>
-  <script src="editable.js?v=e8830cbf7e" defer></script>
-  <script src="app.js?v=e8830cbf7e" defer></script>
+  <script src="convert.js?v=5277950162" defer></script>
+  <script src="editable.js?v=5277950162" defer></script>
+  <script src="app.js?v=5277950162" defer></script>
   <script src="install.js" defer></script>
 </head>
 <body data-tool="select">
@@ -24,11 +24,12 @@
         Open
         <input id="file-input" type="file" accept="application/pdf,.pdf,image/*,.heic,.heif,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
       </label>
-      <label class="btn" title="Merge: add PDFs, photos or Word files to the end of this document">
+      <label class="btn" title="Merge: add PDFs, photos or Word files to this document, in the order you choose">
         Add files
         <input id="add-input" type="file" accept="application/pdf,.pdf,image/*,.heic,.heif,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
       </label>
       <button id="save-btn" class="btn primary" title="Save (Ctrl+S). Save As: Ctrl+Shift+S" disabled>Save</button>
+      <button id="close-btn" class="btn" title="Close this document and go back to the start screen" disabled>Close</button>
     </div>
 
     <div class="group" role="toolbar" aria-label="Tools">
@@ -92,19 +93,32 @@
 
   <div class="workspace">
   <main id="viewer">
-    <div id="drop-hint" class="drop-hint">
+    <div id="drop-hint" class="drop-hint start">
       <h1>PDF Editor</h1>
-      <p>Drop files here, or click <strong>Open</strong>. Pick several files to merge them.</p>
-      <p>Opens <strong>PDFs</strong>, <strong>photos</strong> (JPG, PNG, iPhone HEIC…) and <strong>Word .docx</strong> files. Photos and Word files are turned into PDF pages.</p>
-      <ul>
-        <li><strong>Text</strong> — click anywhere on a page and type.</li>
-        <li><strong>Highlight</strong> — drag across text to highlight exactly those letters (or drag a box over pictures).</li>
-        <li><strong>White-out</strong> — cover existing content, then type over it to "edit" it.</li>
-        <li><strong>Rectangle</strong> and <strong>Draw</strong> — boxes and freehand lines in any color.</li>
-        <li><strong>Add files</strong> — merge other PDFs, photos or Word files onto the end. Each page has buttons to move or delete it.</li>
-        <li><strong>Make searchable</strong> — reads scanned pages (OCR) so <kbd>Ctrl</kbd>+<kbd>F</kbd> finds their words.</li>
-      </ul>
-      <p class="muted">Everything runs in your browser. Your files are never uploaded.</p>
+      <p class="muted">Edit, highlight, merge and convert PDFs. Everything stays on your computer.</p>
+      <div class="start-choices">
+        <button type="button" id="start-open" class="start-card">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M12 4h17l9 9v31H12z" fill="#e8f0fe" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/><path d="M29 4v9h9" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/><path d="M18 24h14M18 30h14M18 36h9" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/></svg>
+          <strong>Open a file</strong>
+          <span>One PDF, photo or Word file.<br>You can also drag it here.</span>
+        </button>
+        <button type="button" id="start-merge" class="start-card">
+          <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M6 8h15l6 6v22H6z" fill="#e6f4f1" stroke="#0f766e" stroke-width="2.5" stroke-linejoin="round"/><path d="M21 14h21v26H21z" fill="#e8f0fe" stroke="#2563eb" stroke-width="2.5" stroke-linejoin="round"/><path d="M26 22h11M26 28h11M26 34h7" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round"/></svg>
+          <strong>Merge files</strong>
+          <span>Combine several PDFs, photos or Word files into one, in the order you choose.</span>
+        </button>
+      </div>
+      <details class="start-tips">
+        <summary>What can it do?</summary>
+        <ul>
+          <li><strong>Text</strong>: click anywhere on a page and type.</li>
+          <li><strong>Highlight</strong>: drag across text to highlight exactly those letters, or drag a box over pictures.</li>
+          <li><strong>White-out</strong>: cover existing content, then type over it to "edit" it.</li>
+          <li><strong>Rectangle</strong> and <strong>Draw</strong>: boxes and freehand lines in any color.</li>
+          <li><strong>Page viewer</strong>: delete, rotate and reorder pages.</li>
+          <li><strong>Make searchable</strong>: reads scanned pages (OCR) so <kbd>Ctrl</kbd>+<kbd>F</kbd> finds their words.</li>
+        </ul>
+      </details>
     </div>
     <div id="pages"></div>
   </main>
@@ -147,6 +161,26 @@
         <button type="submit" class="btn danger-solid">Delete pages</button>
       </div>
     </form>
+  </dialog>
+
+  <dialog id="merge-dialog" class="dialog merge-dialog" aria-labelledby="merge-title">
+    <h2 id="merge-title">Merge files</h2>
+    <div id="merge-drop" class="merge-drop">
+      <p><strong>Drag files here</strong> or</p>
+      <button type="button" id="merge-browse" class="btn">Browse for files…</button>
+      <input id="merge-input" type="file" accept="application/pdf,.pdf,image/*,.heic,.heif,.docx,.doc,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
+      <p class="dialog-hint">PDFs, photos and Word files. Drag files in the list (or use ↑ ↓) to set the order.</p>
+    </div>
+    <ol id="merge-list" class="merge-list" aria-label="Files to merge, in order"></ol>
+    <p id="merge-note" class="dialog-hint merge-note" role="status"></p>
+    <div id="merge-progress" class="merge-progress" hidden>
+      <progress></progress>
+      <span></span>
+    </div>
+    <div class="dialog-buttons">
+      <button type="button" id="merge-cancel" class="btn">Cancel</button>
+      <button type="button" id="merge-done" class="btn primary" disabled>Merge files</button>
+    </div>
   </dialog>
 
   <dialog id="confirm-dialog" class="dialog" aria-labelledby="confirm-title">

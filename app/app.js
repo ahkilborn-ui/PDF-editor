@@ -87,6 +87,7 @@
     fileInput: $('#file-input'),
     addInput: $('#add-input'),
     saveBtn: $('#save-btn'),
+    closeBtn: $('#close-btn'),
     colorInput: $('#color-input'),
     palette: $('#palette'),
     sizeInput: $('#size-input'),
@@ -230,6 +231,7 @@
     const hasDoc = state.order.length > 0;
     document.body.classList.toggle('has-doc', state.pageById.size > 0);
     ui.saveBtn.disabled = !hasDoc || state.busy;
+    ui.closeBtn.disabled = !hasDoc || state.busy;
     ui.ocrBtn.disabled = !hasDoc || state.busy;
     ui.undoBtn.disabled = !state.undo.length;
     ui.redoBtn.disabled = !state.redo.length;
@@ -246,7 +248,11 @@
   // Items are Files, or { file, handle } when the browser also gave us a
   // handle to the file on disk (Chrome / Edge) — that's what lets Save write
   // the changes back into the file that was opened.
-  async function openFiles(fileList, append = false) {
+  // Options: onFile(i, n, name) reports progress; merged: true for a new
+  // document combined from several files (Save then asks where to save it).
+  // Returns, for each usable file, the index of its source (or null if it
+  // couldn't be opened).
+  async function openFiles(fileList, append = false, { onFile = null, merged = false } = {}) {
     const entries = [...fileList].map((x) => (x instanceof Blob ? { file: x, handle: null } : x));
     const usable = entries.filter((x) => kindOf(x.file));
     const files = usable.map((x) => x.file);
@@ -255,26 +261,30 @@
       alert(`These files can't be opened: ${skipped.map((f) => f.name).join(', ')}\n\n` +
         'Supported: PDF, photos (JPG, PNG, iPhone HEIC…) and Word .docx files.');
     }
-    if (!files.length) return;
+    if (!files.length) return [];
     if (state.busy) {
       alert('Please wait for the current task to finish.');
-      return;
+      return [];
     }
     append = append && state.order.length > 0;
     if (!append) {
-      if (state.dirty && !confirm('You have unsaved changes. Open another file anyway?')) return;
+      if (state.dirty && !confirm('You have unsaved changes. Open another file anyway?')) return [];
       resetDocument();
     }
     const token = state.loadToken;
     const before = append ? snapshot() : null;
     let added = 0;
+    const results = [];
     state.busy = true;
     state.busyLabel = 'opening files';
     updateButtons();
     try {
-      for (const file of files) {
-        const n = await addSource(file, token);
-        if (token !== state.loadToken) return;
+      for (const [i, entry] of usable.entries()) {
+        onFile?.(i, usable.length, entry.file.name);
+        const srcBefore = state.sources.length;
+        const n = await addSource(entry.file, token, { password: entry.password });
+        if (token !== state.loadToken) return results;
+        results.push(state.sources.length > srcBefore ? srcBefore : null);
         added += n;
       }
     } finally {
@@ -290,15 +300,16 @@
     }
     // Opened a PDF we can write back to: Save updates that file.
     const first = usable[0];
-    if (!append && first?.handle && kindOf(first.file) === 'pdf' && state.sources[0]?.name === first.file.name) {
+    if (!append && !merged && first?.handle && kindOf(first.file) === 'pdf' && state.sources[0]?.name === first.file.name) {
       state.saveHandle = first.handle;
     }
     const n = state.order.length;
-    const merged = state.sources.length > 1 ? ` (merged from ${state.sources.length} files)` : '';
-    setStatus(`${n} page${n === 1 ? '' : 's'}${merged}.` +
+    const mergedNote = state.sources.length > 1 ? ` (merged from ${state.sources.length} files)` : '';
+    setStatus(`${n} page${n === 1 ? '' : 's'}${mergedNote}.` +
       (append && added ? ` Added ${added} page${added === 1 ? '' : 's'} at the end.` : '') +
       (state.saveHandle ? ` Ctrl+S saves your changes to ${state.saveHandle.name}.` : ''));
     updateButtons();
+    return results;
   }
 
   const canPickOpenFile = typeof window.showOpenFilePicker === 'function';
@@ -334,13 +345,17 @@
     openFiles(items, append);
   }
 
-  for (const [input, append] of [[ui.fileInput, false], [ui.addInput, true]]) {
-    input.closest('label').addEventListener('click', (e) => {
-      if (!canPickOpenFile || e.target === input) return;
-      e.preventDefault();
-      chooseFiles(append);
-    });
-  }
+  ui.fileInput.closest('label').addEventListener('click', (e) => {
+    if (!canPickOpenFile || e.target === ui.fileInput) return;
+    e.preventDefault();
+    chooseFiles(false);
+  });
+  // "Add files" opens the merge window, with the open document listed first.
+  ui.addInput.closest('label').addEventListener('click', (e) => {
+    if (e.target === ui.addInput) return;
+    e.preventDefault();
+    openMergeDialog();
+  });
 
   function resetDocument() {
     state.loadToken++;
@@ -358,7 +373,7 @@
     updateButtons();
   }
 
-  async function addSource(file, token) {
+  async function addSource(file, token, { password: knownPassword = null } = {}) {
     try {
       const pdfjs = await loadPdfjs();
       const kind = kindOf(file);
@@ -390,8 +405,8 @@
         cMapPacked: true,
         standardFontDataUrl: CDN.pdfjsFonts,
       };
-      const task = pdfjs.getDocument({ data: bytes.slice(), ...docOptions });
-      let password = null; // remembered so the file can be unlocked when saving
+      const task = pdfjs.getDocument({ data: bytes.slice(), ...docOptions, ...(knownPassword ? { password: knownPassword } : {}) });
+      let password = knownPassword; // remembered so the file can be unlocked when saving
       task.onPassword = (provide, reason) => {
         const again = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD;
         const pw = prompt(again ? `Wrong password for ${file.name}. Try again:` : `${file.name} is password protected. Password:`);
@@ -2573,7 +2588,527 @@
   ui.zoomOut.addEventListener('click', () => zoomStep(-1));
   ui.zoomFit.addEventListener('click', zoomFit);
 
-  // Dropping files: opens them, or adds them to the end if a document is open.
+  // ----------------------------------------------------------- merge window
+
+  // Lists the files to combine, in order, before anything is opened: drag
+  // files in (or browse), drag rows (or use ↑ ↓) to reorder, × to remove.
+  const merge = {
+    dialog: $('#merge-dialog'),
+    title: $('#merge-title'),
+    list: $('#merge-list'),
+    drop: $('#merge-drop'),
+    input: $('#merge-input'),
+    browse: $('#merge-browse'),
+    note: $('#merge-note'),
+    progress: $('#merge-progress'),
+    cancel: $('#merge-cancel'),
+    done: $('#merge-done'),
+    items: [],
+    dragIndex: null,
+    busy: false,
+  };
+
+  const KIND_LABEL = { image: 'Photo', docx: 'Word document' };
+
+  function openMergeDialog(files = [], { includeCurrent = state.order.length > 0 } = {}) {
+    if (state.busy) {
+      alert('Please wait for the current task to finish.');
+      return;
+    }
+    if (merge.dialog.open) {
+      addMergeFiles(files);
+      return;
+    }
+    merge.items = [];
+    merge.note.textContent = '';
+    merge.progress.hidden = true;
+    if (includeCurrent && state.order.length) {
+      const n = state.order.length;
+      merge.items.push({
+        current: true,
+        name: state.saveHandle?.name || state.sources[0]?.name || 'This document',
+        meta: `Open now · ${n} page${n === 1 ? '' : 's'}`,
+        thumb: currentDocThumb(),
+      });
+    }
+    renderMergeList();
+    merge.dialog.showModal();
+    merge.browse.focus();
+    addMergeFiles(files);
+  }
+
+  // A small picture of the open document's first page, from its canvas.
+  function currentDocThumb() {
+    const page = state.pageById.get(state.order[0]);
+    const src = page?.canvas;
+    if (!src?.width) return null;
+    const c = document.createElement('canvas');
+    const s = 96 / Math.max(src.width, src.height);
+    c.width = Math.max(1, Math.round(src.width * s));
+    c.height = Math.max(1, Math.round(src.height * s));
+    c.getContext('2d').drawImage(src, 0, 0, c.width, c.height);
+    return c.toDataURL();
+  }
+
+  function sameFile(a, b) {
+    return a.name === b.name && a.size === b.size && a.lastModified === b.lastModified;
+  }
+
+  function addMergeFiles(fileList) {
+    const entries = [...fileList].map((x) => (x instanceof Blob ? { file: x, handle: null } : x));
+    const notes = [];
+    for (const entry of entries) {
+      const kind = kindOf(entry.file);
+      if (!kind || kind === 'doc') {
+        notes.push(kind === 'doc'
+          ? `${entry.file.name}: old .doc files can't be converted. Save it as .docx in Word first.`
+          : `${entry.file.name}: not a PDF, photo or Word file.`);
+        continue;
+      }
+      const item = {
+        ...entry,
+        kind,
+        name: entry.file.name,
+        meta: 'Reading…',
+        loading: true,
+      };
+      merge.items.push(item);
+      describeMergeItem(item);
+    }
+    if (notes.length) merge.note.textContent = notes.join(' ');
+    renderMergeList();
+  }
+
+  // Fill in an item's picture and page count. PDFs are read here so a
+  // password can be asked for now, not halfway through merging.
+  async function describeMergeItem(item) {
+    const size = item.file.size < 1048576
+      ? `${Math.max(1, Math.round(item.file.size / 1024))} KB`
+      : `${(item.file.size / 1048576).toFixed(1)} MB`;
+    try {
+      if (item.kind === 'pdf') {
+        const pdfjs = await loadPdfjs();
+        const task = pdfjs.getDocument({ data: new Uint8Array(await item.file.arrayBuffer()), isEvalSupported: false });
+        let cancelled = false;
+        task.onPassword = (provide, reason) => {
+          const again = reason === pdfjs.PasswordResponses.INCORRECT_PASSWORD;
+          const pw = prompt(again ? `Wrong password for ${item.name}. Try again:` : `${item.name} is password protected. Password:`);
+          if (pw == null) {
+            cancelled = true;
+            task.destroy();
+          } else {
+            item.password = pw;
+            provide(pw);
+          }
+        };
+        let doc;
+        try {
+          doc = await task.promise;
+        } catch (err) {
+          if (cancelled) {
+            removeMergeItem(item, `${item.name} was left out: it needs its password.`);
+            return;
+          }
+          throw err;
+        }
+        try {
+          item.pages = doc.numPages;
+          item.meta = `${doc.numPages} page${doc.numPages === 1 ? '' : 's'} · ${size}${item.password ? ' · 🔒' : ''}`;
+          const page = await doc.getPage(1);
+          const vp1 = page.getViewport({ scale: 1 });
+          const vp = page.getViewport({ scale: 96 / Math.max(vp1.width, vp1.height) });
+          const c = document.createElement('canvas');
+          c.width = Math.ceil(vp.width);
+          c.height = Math.ceil(vp.height);
+          await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+          item.thumb = c.toDataURL();
+        } finally {
+          doc.destroy();
+        }
+      } else if (item.kind === 'image') {
+        item.meta = `Photo · ${size}`;
+        item.thumb = URL.createObjectURL(item.file); // HEIC can't be shown: the row falls back to an icon
+        item.objectUrl = item.thumb;
+      } else {
+        item.meta = `Word document · ${size}`;
+      }
+    } catch (err) {
+      console.warn('Could not read', item.name, err);
+      removeMergeItem(item, `${item.name} could not be read (${err.message || err}).`);
+      return;
+    }
+    item.loading = false;
+    renderMergeList();
+  }
+
+  function removeMergeItem(item, note = '') {
+    const i = merge.items.indexOf(item);
+    if (i < 0) return;
+    merge.items.splice(i, 1);
+    if (item.objectUrl) URL.revokeObjectURL(item.objectUrl);
+    if (note) merge.note.textContent = note;
+    renderMergeList();
+  }
+
+  function moveMergeItem(from, to) {
+    if (to < 0 || to >= merge.items.length || from === to) return;
+    const [item] = merge.items.splice(from, 1);
+    merge.items.splice(to, 0, item);
+    renderMergeList();
+  }
+
+  function mergeIcon(kind) {
+    const color = kind === 'docx' ? '#2563eb' : kind === 'image' ? '#0f766e' : '#b91c1c';
+    const label = kind === 'docx' ? 'W' : kind === 'image' ? 'IMG' : 'PDF';
+    return `<svg viewBox="0 0 40 48" aria-hidden="true"><path d="M4 2h22l10 10v34H4z" fill="#fff" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>` +
+      `<text x="20" y="34" text-anchor="middle" font-size="${label.length > 1 ? 10 : 16}" font-family="sans-serif" font-weight="700" fill="${color}">${label}</text></svg>`;
+  }
+
+  function renderMergeList() {
+    const focusedRow = document.activeElement?.closest?.('.merge-item');
+    const focusKey = focusedRow ? [focusedRow.dataset.index, document.activeElement.dataset.act] : null;
+    merge.list.textContent = '';
+    // A file listed twice gets a note on its later copy (it is still allowed).
+    merge.items.forEach((item, i) => {
+      item.duplicate = !!item.file && merge.items.slice(0, i).some((x) => x.file && sameFile(x.file, item.file));
+    });
+    merge.items.forEach((item, i) => {
+      const li = document.createElement('li');
+      li.className = 'merge-item';
+      li.dataset.index = i;
+      li.draggable = !merge.busy;
+      li.classList.toggle('current', !!item.current);
+      li.classList.toggle('loading', !!item.loading);
+
+      const grip = document.createElement('span');
+      grip.className = 'merge-grip';
+      grip.textContent = '⠿';
+      grip.title = 'Drag to move';
+
+      const num = document.createElement('span');
+      num.className = 'merge-num';
+      num.textContent = `${i + 1}.`;
+
+      const pic = document.createElement('span');
+      pic.className = 'merge-thumb';
+      if (item.thumb) {
+        const img = document.createElement('img');
+        img.alt = '';
+        img.src = item.thumb;
+        img.onerror = () => { pic.innerHTML = mergeIcon(item.kind); };
+        pic.append(img);
+      } else {
+        pic.innerHTML = mergeIcon(item.kind || 'pdf');
+      }
+
+      const text = document.createElement('span');
+      text.className = 'merge-text';
+      const name = document.createElement('strong');
+      name.textContent = item.name;
+      name.title = item.name;
+      const meta = document.createElement('span');
+      meta.className = 'merge-meta';
+      meta.textContent = item.meta || KIND_LABEL[item.kind] || '';
+      text.append(name, meta);
+      if (item.duplicate) {
+        const dup = document.createElement('span');
+        dup.className = 'merge-dup';
+        dup.textContent = 'Already in the list. It will be added twice.';
+        text.append(dup);
+      }
+
+      const buttons = document.createElement('span');
+      buttons.className = 'merge-buttons';
+      const button = (act, label, title, disabled) => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'icon-btn';
+        b.dataset.act = act;
+        b.textContent = label;
+        b.title = title;
+        b.setAttribute('aria-label', `${title}: ${item.name}`);
+        b.disabled = disabled || merge.busy;
+        buttons.append(b);
+      };
+      button('up', '↑', 'Move up', i === 0);
+      button('down', '↓', 'Move down', i === merge.items.length - 1);
+      if (item.current) {
+        const keep = document.createElement('span');
+        keep.className = 'merge-keep';
+        buttons.append(keep);
+      } else {
+        button('remove', '×', 'Remove from the list');
+      }
+
+      li.append(grip, num, pic, text, buttons);
+      merge.list.append(li);
+    });
+    if (focusKey) {
+      // Keep the keyboard focus on the moved row's button.
+      const btn = merge.list.querySelector(`.merge-item[data-index="${focusKey[0]}"] [data-act="${focusKey[1]}"]`);
+      if (btn && !btn.disabled) btn.focus();
+    }
+    const n = merge.items.length;
+    const loading = merge.items.some((x) => x.loading);
+    merge.list.hidden = n === 0;
+    merge.dialog.classList.toggle('has-files', n > 0);
+    merge.done.textContent = n >= 2 ? `Merge ${n} files` : 'Merge files';
+    merge.done.disabled = merge.busy || n < 2 || loading;
+    merge.done.title = n < 2 ? 'Add at least two files' : loading ? 'Still reading the files…' : '';
+    merge.browse.disabled = merge.busy;
+  }
+
+  merge.list.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-act]');
+    if (!btn || merge.busy) return;
+    const i = Number(btn.closest('.merge-item').dataset.index);
+    if (btn.dataset.act === 'up') moveMergeItem(i, i - 1);
+    else if (btn.dataset.act === 'down') moveMergeItem(i, i + 1);
+    else if (btn.dataset.act === 'remove') {
+      const item = merge.items[i];
+      removeMergeItem(item);
+      const rows = merge.list.querySelectorAll('.merge-item');
+      (rows[Math.min(i, rows.length - 1)]?.querySelector('[data-act="remove"]') || merge.browse).focus();
+    }
+  });
+
+  // Reordering by dragging rows.
+  merge.list.addEventListener('dragstart', (e) => {
+    const li = e.target.closest?.('.merge-item');
+    if (!li || merge.busy) return;
+    merge.dragIndex = Number(li.dataset.index);
+    li.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', li.dataset.index);
+  });
+  merge.list.addEventListener('dragend', () => {
+    merge.dragIndex = null;
+    merge.list.querySelectorAll('.dragging, .drop-before, .drop-after').forEach((el) => el.classList.remove('dragging', 'drop-before', 'drop-after'));
+  });
+
+  // Where a dragged row (or dropped files) would go: before row i.
+  function mergeDropIndex(e) {
+    const rows = [...merge.list.querySelectorAll('.merge-item')];
+    for (const [i, row] of rows.entries()) {
+      const r = row.getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) return i;
+    }
+    return rows.length;
+  }
+
+  function showMergeDropMark(index) {
+    const rows = [...merge.list.querySelectorAll('.merge-item')];
+    rows.forEach((row) => row.classList.remove('drop-before', 'drop-after'));
+    if (index < rows.length) rows[index].classList.add('drop-before');
+    else rows[rows.length - 1]?.classList.add('drop-after');
+  }
+
+  const draggingFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+
+  // The whole window takes the drop, so files dropped a little off target
+  // aren't opened by the browser instead.
+  merge.dialog.addEventListener('dragover', (e) => {
+    if (merge.busy) return;
+    if (merge.dragIndex != null) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      showMergeDropMark(mergeDropIndex(e));
+    } else if (draggingFiles(e)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      merge.dialog.classList.add('dragover');
+      if (e.target.closest?.('.merge-list')) showMergeDropMark(mergeDropIndex(e));
+      else merge.list.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+    }
+  });
+  merge.dialog.addEventListener('dragleave', (e) => {
+    if (!merge.dialog.contains(e.relatedTarget)) {
+      merge.dialog.classList.remove('dragover');
+      merge.list.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+    }
+  });
+  merge.dialog.addEventListener('drop', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    merge.dialog.classList.remove('dragover');
+    if (merge.busy) return;
+    const at = mergeDropIndex(e);
+    const onList = !!e.target.closest?.('.merge-list');
+    merge.list.querySelectorAll('.drop-before, .drop-after').forEach((el) => el.classList.remove('drop-before', 'drop-after'));
+    if (merge.dragIndex != null) {
+      const from = merge.dragIndex;
+      merge.dragIndex = null;
+      moveMergeItem(from, at > from ? at - 1 : at);
+      return;
+    }
+    const files = [...e.dataTransfer.files];
+    if (!files.length) return;
+    const items = [...e.dataTransfer.items].filter((item) => item.kind === 'file');
+    const handles = items.map((item) => (item.getAsFileSystemHandle ? item.getAsFileSystemHandle().catch(() => null) : null));
+    Promise.all(handles).then((list) => {
+      const before = merge.items.length;
+      addMergeFiles(files.map((file, i) => ({ file, handle: list[i]?.kind === 'file' ? list[i] : null })));
+      // Dropped onto the list: put them where they were dropped.
+      if (onList && at < before) {
+        const added = merge.items.splice(before);
+        merge.items.splice(at, 0, ...added);
+        renderMergeList();
+      }
+    });
+  });
+
+  // Keyboard: Alt+↑ / Alt+↓ moves the focused row.
+  merge.list.addEventListener('keydown', (e) => {
+    if (!e.altKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+    const li = e.target.closest('.merge-item');
+    if (!li) return;
+    e.preventDefault();
+    const i = Number(li.dataset.index);
+    moveMergeItem(i, e.key === 'ArrowUp' ? i - 1 : i + 1);
+  });
+
+  merge.browse.addEventListener('click', async () => {
+    if (!canPickOpenFile) {
+      merge.input.click();
+      return;
+    }
+    try {
+      const handles = await window.showOpenFilePicker({
+        multiple: true,
+        types: [{
+          description: 'PDFs, photos and Word files',
+          accept: {
+            'application/pdf': ['.pdf'],
+            'image/*': ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.heic', '.heif', '.avif'],
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+          },
+        }],
+      });
+      addMergeFiles(await Promise.all(handles.map(async (handle) => ({ file: await handle.getFile(), handle }))));
+    } catch (err) {
+      if (err.name !== 'AbortError') merge.input.click();
+    }
+  });
+  merge.input.addEventListener('change', () => {
+    addMergeFiles([...merge.input.files]);
+    merge.input.value = '';
+  });
+
+  async function cancelMerge() {
+    if (merge.busy) return;
+    if (merge.items.some((x) => !x.current)) {
+      const sure = await askConfirm('The files you added won\'t be merged.', {
+        title: 'Cancel merging?', yes: 'Discard files', no: 'Keep adding', danger: false,
+      });
+      if (!sure) return;
+    }
+    closeMergeDialog();
+  }
+
+  function closeMergeDialog() {
+    for (const x of merge.items) if (x.objectUrl) URL.revokeObjectURL(x.objectUrl);
+    merge.items = [];
+    merge.busy = false;
+    merge.dialog.close();
+  }
+
+  merge.cancel.addEventListener('click', cancelMerge);
+  merge.dialog.addEventListener('cancel', (e) => {
+    e.preventDefault(); // Esc asks first, like Cancel
+    cancelMerge();
+  });
+
+  merge.done.addEventListener('click', finishMerge);
+
+  async function finishMerge() {
+    if (merge.busy || merge.items.length < 2 || merge.items.some((x) => x.loading)) return;
+    const items = merge.items.slice();
+    const hasCurrent = items.some((x) => x.current);
+    const newItems = items.filter((x) => !x.current);
+    if (!hasCurrent && state.dirty) {
+      const sure = await askConfirm('The open document has changes that aren\'t saved. Merging starts a new document.', {
+        title: 'Unsaved changes', yes: 'Merge anyway', no: 'Go back', danger: false,
+      });
+      if (!sure) return;
+      state.dirty = false; // already asked
+    }
+    merge.busy = true;
+    merge.progress.hidden = false;
+    const bar = merge.progress.querySelector('progress');
+    const label = merge.progress.querySelector('span');
+    bar.max = newItems.length;
+    bar.value = 0;
+    renderMergeList();
+    const onFile = (i, n, name) => {
+      bar.value = i;
+      label.textContent = `Adding file ${i + 1} of ${n}: ${name}`;
+    };
+    const entries = newItems.map(({ file, handle, password }) => ({ file, handle, password }));
+    const currentOrder = state.order.slice();
+    let results;
+    try {
+      results = hasCurrent
+        ? await openFiles(entries, true, { onFile })
+        : await openFiles(entries, false, { merged: true, onFile });
+    } finally {
+      bar.value = newItems.length;
+    }
+    // Put the open document's pages where it was placed in the list.
+    if (hasCurrent && results.some((r) => r != null)) {
+      const pagesOf = new Map();
+      for (const id of state.order) {
+        const src = state.pageById.get(id).src;
+        if (!pagesOf.has(src)) pagesOf.set(src, []);
+        pagesOf.get(src).push(id);
+      }
+      const order = [];
+      let k = 0;
+      for (const item of items) {
+        if (item.current) order.push(...currentOrder);
+        else {
+          const src = results[k++];
+          if (src != null) order.push(...(pagesOf.get(src) || []));
+        }
+      }
+      if (order.length === state.order.length) {
+        state.order = order;
+        layoutPages();
+        if (panel.open) renderPanel();
+      }
+    }
+    const added = results.filter((r) => r != null).length;
+    closeMergeDialog();
+    if (added) {
+      const n = state.order.length;
+      setStatus(`Merged ${added + (hasCurrent ? 1 : 0)} files: ${n} page${n === 1 ? '' : 's'}. ` +
+        (state.saveHandle ? `Ctrl+S saves to ${state.saveHandle.name}.` : 'Ctrl+S asks where to save the merged PDF.'));
+    }
+  }
+
+  // ------------------------------------------------- start screen and Close
+
+  $('#start-open').addEventListener('click', () => chooseFiles(false));
+  $('#start-merge').addEventListener('click', () => openMergeDialog([], { includeCurrent: false }));
+
+  async function closeDocument() {
+    if (!state.order.length || state.busy) return;
+    finishEditing();
+    if (state.dirty) {
+      const sure = await askConfirm('Your changes haven\'t been saved.', {
+        title: 'Close document?', yes: 'Close without saving', no: 'Keep editing',
+      });
+      if (!sure) return;
+    }
+    if (panel.open) togglePanel(false);
+    resetDocument();
+    setStatus('No document open.');
+    ui.viewer.scrollTop = 0;
+  }
+
+  ui.closeBtn.addEventListener('click', closeDocument);
+
+  // Dropping files: one file onto the start screen opens it; otherwise the
+  // merge window opens with them.
   ui.viewer.addEventListener('dragover', (e) => {
     if (panel.dragId) return; // a page being reordered in the page viewer
     e.preventDefault();
@@ -2589,7 +3124,12 @@
     const items = [...e.dataTransfer.items].filter((item) => item.kind === 'file');
     const handles = items.map((item) => (item.getAsFileSystemHandle ? item.getAsFileSystemHandle().catch(() => null) : null));
     Promise.all(handles).then((list) => {
-      openFiles(files.map((file, i) => ({ file, handle: list[i]?.kind === 'file' ? list[i] : null })), true);
+      const entries = files.map((file, i) => ({ file, handle: list[i]?.kind === 'file' ? list[i] : null }));
+      if (!entries.length) return;
+      // One file onto the start screen opens it; otherwise the merge window
+      // opens so the order can be checked first.
+      if (!state.order.length && entries.length === 1) openFiles(entries, false);
+      else openMergeDialog(entries);
     });
   });
 
@@ -2816,12 +3356,13 @@
     window.launchQueue.setConsumer(async (params) => {
       if (!params.files?.length) return;
       const items = await Promise.all(params.files.map(async (handle) => ({ file: await handle.getFile(), handle })));
-      openFiles(items, false);
+      if (items.length > 1) openMergeDialog(items, { includeCurrent: false });
+      else openFiles(items, false);
     });
   }
 
   // Exposed for automated tests / debugging in the console.
-  window.pdfEditor = { state, panel, textIndex, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel };
+  window.pdfEditor = { state, panel, textIndex, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel, openMergeDialog, closeDocument, merge };
 
   showColor(state.colors[state.tool]);
   updateHighlightPreview();
