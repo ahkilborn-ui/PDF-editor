@@ -693,6 +693,7 @@
       thumb.rendered = false;
       thumb.stale = true; // redrawn the next time the page viewer shows it
       if (panel.open) renderThumb(page.id);
+      scheduleThumbOverlay(page.id);
     }
   }
 
@@ -858,11 +859,14 @@
       const btn = e.target.closest('button[data-turn]');
       if (btn) rotatePages([page.id], Number(btn.dataset.turn));
     });
-    frame.append(canvas, check, turns);
+    // Edits (highlights, text, shapes, drawings) drawn over the page picture.
+    const overlay = document.createElement('canvas');
+    overlay.className = 'thumb-overlay';
+    frame.append(canvas, overlay, check, turns);
     const num = document.createElement('div');
     num.className = 'thumb-num';
     item.append(frame, num);
-    entry = { item, frame, canvas, checkbox, num, rendered: false };
+    entry = { item, frame, canvas, overlay, checkbox, num, rendered: false };
     panel.items.set(page.id, entry);
 
     checkbox.addEventListener('change', () => {
@@ -935,6 +939,7 @@
         entry.checkbox.setAttribute('aria-label', `Select page ${i + 1}`);
         entry.item.classList.toggle('checked', checked);
         if (entry.stale) renderThumb(page.id);
+        drawThumbOverlay(page.id);
       });
     }
     updatePanelSelection();
@@ -945,6 +950,83 @@
     panel.selection.classList.toggle('show', n > 0);
     panel.deleteBtn.textContent = n === 1 ? 'Delete 1 page' : `Delete ${n} pages`;
     for (const btn of panel.selection.querySelectorAll('button')) btn.tabIndex = n > 0 ? 0 : -1;
+  }
+
+  // --- edits shown on the page pictures
+
+  const thumbOverlayQueue = new Set();
+  let thumbOverlayFrame = 0;
+
+  // Redraw a page picture's edits soon (at most once per screen refresh).
+  function scheduleThumbOverlay(pageId) {
+    if (!panel.open || !panel.items.has(pageId)) return;
+    thumbOverlayQueue.add(pageId);
+    if (thumbOverlayFrame) return;
+    thumbOverlayFrame = requestAnimationFrame(() => {
+      thumbOverlayFrame = 0;
+      for (const id of thumbOverlayQueue) drawThumbOverlay(id);
+      thumbOverlayQueue.clear();
+    });
+  }
+
+  function drawThumbOverlay(id) {
+    const entry = panel.items.get(id);
+    const page = state.pageById.get(id);
+    if (!entry || !page) return;
+    const dpr = window.devicePixelRatio || 1;
+    const shown = THUMB_WIDTH / page.vp.width;
+    const c = entry.overlay;
+    c.width = Math.round(page.vp.width * shown * dpr);
+    c.height = Math.round(page.vp.height * shown * dpr);
+    c.style.width = `${THUMB_WIDTH}px`;
+    c.style.height = `${Math.round(page.vp.height * shown)}px`;
+    const ctx = c.getContext('2d');
+    ctx.setTransform(shown * dpr, 0, 0, shown * dpr, 0, 0);
+    for (const a of state.annots) {
+      if (a.page === id) paintItem(ctx, a);
+    }
+  }
+
+  // Draw one edit with canvas drawing calls, in page units (as on screen).
+  function paintItem(ctx, a) {
+    ctx.save();
+    if (a.type === 'highlight') {
+      ctx.globalAlpha = HIGHLIGHT_OPACITY;
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.fillStyle = a.color;
+      ctx.fillRect(a.x, a.y, a.w, a.h);
+    } else if (a.type === 'whiteout') {
+      ctx.fillStyle = a.color;
+      ctx.fillRect(a.x, a.y, a.w, a.h);
+    } else if (a.type === 'rect') {
+      const half = Math.min(a.width / 2, a.w / 2, a.h / 2);
+      if (a.fill) {
+        ctx.fillStyle = a.color;
+        ctx.fillRect(a.x, a.y, a.w, a.h);
+      }
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = a.width;
+      ctx.strokeRect(a.x + half, a.y + half, a.w - 2 * half, a.h - 2 * half);
+    } else if (a.type === 'ink') {
+      ctx.strokeStyle = a.color;
+      ctx.lineWidth = a.width;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      a.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      if (a.points.length === 1) ctx.lineTo(a.points[0][0] + 0.01, a.points[0][1]);
+      ctx.stroke();
+    } else if (a.type === 'text') {
+      ctx.translate(a.x, a.y);
+      if (a.rot) ctx.rotate((a.rot * Math.PI) / 180);
+      ctx.fillStyle = a.color;
+      ctx.font = `${a.size}px ${FONT_FAMILY}`;
+      ctx.textBaseline = 'alphabetic';
+      a.text.split('\n').forEach((line, k) => {
+        ctx.fillText(line, TEXT_PADDING, TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO);
+      });
+    }
+    ctx.restore();
   }
 
   // Page numbers (1-based, current order) as short text, e.g. "2, 5 and 7".
@@ -1150,6 +1232,7 @@
     for (const a of state.annots) {
       if (a.page === page.id) layer.append(createAnnotEl(a));
     }
+    scheduleThumbOverlay(page.id);
   }
 
   function redrawPageOf(annot) {
@@ -1216,6 +1299,7 @@
   // Re-render one annotation after a property change. A text box being typed
   // in is styled in place so the caret isn't lost.
   function refreshAnnot(a) {
+    scheduleThumbOverlay(a.page);
     const el = annotEl(a.id);
     if (!el) return;
     if (a.id === state.editingId) {
@@ -1294,6 +1378,7 @@
     }
     el.addEventListener('input', () => {
       a.text = el.innerText.replace(/\n$/, '');
+      scheduleThumbOverlay(a.page); // the page viewer shows the text as it's typed
     });
     el.addEventListener('paste', (e) => {
       e.preventDefault();

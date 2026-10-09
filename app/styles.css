@@ -493,6 +493,7 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   outline-offset: 2px;
 }
 .thumb-frame canvas { display: block; }
+.thumb-frame canvas.thumb-overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
 .thumb:hover .thumb-frame { outline-color: #b8cbf5; }
 .thumb.checked .thumb-frame { outline-color: #d92d20; }
 
