@@ -363,9 +363,9 @@ body[data-tool="draw"] .annotLayer { cursor: crosshair; }
   pointer-events: auto;
 }
 body[data-tool="select"] .annot { cursor: move; }
-/* Highlights and rectangles don't block selecting the text under them;
-   click one to select it, then drag to move it. */
-body[data-tool="select"] .annot:is(.hl, .rect):not(.selected) { pointer-events: none; }
+/* Highlights and rectangles don't block the text under them, or text boxes
+   inside them; app.js works out clicks on them (a rectangle by its border). */
+body:is([data-tool="select"], [data-tool="text"]) .annot:is(.hl, .rect) { pointer-events: none; }
 body[data-tool="select"] .annot.wo:hover { outline: 1px dashed #aaa; }
 body[data-tool="select"] .annot.txt.editing,
 body[data-tool="text"] .annot.txt { cursor: text; }

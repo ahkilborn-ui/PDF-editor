@@ -1555,26 +1555,42 @@
 
   // The item under the pointer on this page, topmost first (works whatever
   // the tool, even where items let clicks through to the text).
+  //
+  // Text boxes and other items inside an empty (unfilled) rectangle, or under
+  // a highlight, win: the rectangle or highlight is picked only when there's
+  // nothing else there (or on the rectangle's border).
   function annotAt(page, e) {
     const slop = 4;
+    const tol = slop / state.zoom;
     const pt = pointInPage(page, e);
     const list = state.annots.filter((a) => a.page === page.id);
+    let weak = null;
     for (let i = list.length - 1; i >= 0; i--) {
       const a = list[i];
       if (a.type === 'ink') {
-        const tol = a.width / 2 + slop / state.zoom;
         const pts = a.points.length > 1 ? a.points : [a.points[0], a.points[0]];
         for (let k = 1; k < pts.length; k++) {
-          if (distToSegment(pt, pts[k - 1], pts[k]) <= tol) return a.id;
+          if (distToSegment(pt, pts[k - 1], pts[k]) <= a.width / 2 + tol) return a.id;
         }
-      } else {
-        const r = annotEl(a.id)?.getBoundingClientRect();
-        if (r && e.clientX >= r.left - slop && e.clientX <= r.right + slop && e.clientY >= r.top - slop && e.clientY <= r.bottom + slop) {
-          return a.id;
+        continue;
+      }
+      const r = annotEl(a.id)?.getBoundingClientRect();
+      if (!r || e.clientX < r.left - slop || e.clientX > r.right + slop || e.clientY < r.top - slop || e.clientY > r.bottom + slop) continue;
+      if (a.type === 'rect' && !a.fill) {
+        const inner = a.width + tol; // how far in from the edge still counts as the border
+        const inside = pt.x > a.x + inner && pt.x < a.x + a.w - inner && pt.y > a.y + inner && pt.y < a.y + a.h - inner;
+        if (inside) {
+          weak ??= a.id;
+          continue;
         }
       }
+      if (a.type === 'highlight') {
+        weak ??= a.id;
+        continue;
+      }
+      return a.id;
     }
-    return null;
+    return weak;
   }
 
   function distToSegment(p, [x1, y1], [x2, y2]) {
@@ -1833,7 +1849,19 @@
 
     host.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
-      if (state.tool === 'select' && !e.target.closest('.annot')) return;
+      if (state.tool === 'select' && !e.target.closest('.annot')) {
+        // Highlights and rectangles let clicks through (to the text and
+        // anything inside them); pressing on the selected one moves it.
+        const hit = annotAt(page, e);
+        if (hit == null || !selectedItems().some((x) => x.id === hit)) return;
+        e.preventDefault();
+        e.stopPropagation(); // not a click on empty space: keep the selection
+        finishEditing();
+        const items = selectedItems();
+        drag = { kind: 'move', items, start: pointInPage(page, e), orig: JSON.stringify(items), moved: false };
+        host.setPointerCapture(e.pointerId);
+        return;
+      }
       const target = e.target.closest('.annot');
       const id = target ? Number(target.dataset.id) : null;
       if (id != null && id === state.editingId) return; // clicks inside the box being edited
@@ -2041,10 +2069,8 @@
     if (sel && !sel.isCollapsed) return;
     const page = pageAt(e.target);
     if (!page) return;
-    const pt = pointInPage(page, e);
-    const hit = state.annots.filter((a) => a.page === page.id && (a.type === 'highlight' || a.type === 'rect') &&
-      pt.x >= a.x && pt.x <= a.x + a.w && pt.y >= a.y && pt.y <= a.y + a.h).pop();
-    if (hit) select(hit.id);
+    const hit = annotAt(page, e);
+    if (hit != null) select(hit);
   });
 
   // ------------------------------------------------ highlight selected text
