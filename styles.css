@@ -419,6 +419,10 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   cursor: pointer;
 }
 .icon-btn:hover { background: #eef1f5; }
+.icon-btn:disabled { opacity: .35; cursor: default; background: transparent; }
+.thumb-size { display: inline-flex; gap: 2px; margin-left: auto; }
+.thumb-size + .icon-btn { margin-left: 4px; }
+.icon-btn.small-icon { width: 26px; height: 26px; margin: 0; border: 1px solid var(--border); font-size: 17px; }
 .panel-range-btn { justify-content: center; }
 
 /* "Delete pages" drops down once any page is ticked. */
@@ -440,7 +444,7 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   transform: none;
 }
 .panel-selection .btn { flex: 1; justify-content: center; }
-.panel-hint { margin: 0; color: var(--muted); font-size: 12px; }
+.panel-hint { margin: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: help; }
 
 .btn.danger-solid { background: #d92d20; border-color: #d92d20; color: #fff; }
 .btn.danger-solid:hover:not(:disabled) { background: #b42318; }
@@ -468,7 +472,7 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   flex-direction: column;
   align-items: center;
   gap: 4px;
-  padding: 6px 0;
+  padding: 5px 0;
   cursor: grab;
 }
 .thumb.dragging { opacity: .4; }
@@ -516,7 +520,19 @@ body[data-tool="draw"] .annot { pointer-events: none; }
   accent-color: #d92d20;
   cursor: pointer;
 }
-.thumb-num { font-size: 12px; color: var(--muted); }
+.thumb-num {
+  position: absolute;
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: rgba(32, 33, 36, .72);
+  color: #fff;
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+}
 
 .thumb-rotate {
   position: absolute;

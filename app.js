@@ -763,9 +763,17 @@
   // "Delete pages" button drops down), drag pages to reorder them, or delete
   // a numbered range. Deletions are confirmed first and can be undone.
 
-  // Page pictures fill the panel's width (panel 260px, minus padding, a scroll bar
-  // and the highlight outline), so edits on them are easier to see.
-  const THUMB_WIDTH = 212;
+  // Width of the page pictures, adjustable with the − / + buttons in the
+  // panel (remembered on this computer). The largest fills the panel.
+  const THUMB_SIZES = [110, 140, 175, 212];
+  let THUMB_WIDTH = (() => {
+    try {
+      const saved = Number(localStorage.getItem('pdfEditor.thumbWidth'));
+      return THUMB_SIZES.includes(saved) ? saved : 140;
+    } catch {
+      return 140;
+    }
+  })();
 
   const panel = {
     el: $('#page-panel'),
@@ -843,10 +851,7 @@
     item.dataset.pageId = page.id;
     const frame = document.createElement('div');
     frame.className = 'thumb-frame';
-    const scale = THUMB_WIDTH / page.vp.width;
     const canvas = document.createElement('canvas');
-    canvas.style.width = `${THUMB_WIDTH}px`;
-    canvas.style.height = `${Math.round(page.vp.height * scale)}px`;
     const check = document.createElement('label');
     check.className = 'thumb-check';
     const checkbox = document.createElement('input');
@@ -867,8 +872,10 @@
     frame.append(canvas, overlay, check, turns);
     const num = document.createElement('div');
     num.className = 'thumb-num';
-    item.append(frame, num);
+    frame.append(num); // page number on the picture's bottom edge (saves space)
+    item.append(frame);
     entry = { item, frame, canvas, overlay, checkbox, num, rendered: false };
+    sizeThumb(entry, page);
     panel.items.set(page.id, entry);
 
     checkbox.addEventListener('change', () => {
@@ -895,6 +902,40 @@
     });
     thumbObserver.observe(item);
     return entry;
+  }
+
+  function sizeThumb(entry, page) {
+    entry.canvas.style.width = `${THUMB_WIDTH}px`;
+    entry.canvas.style.height = `${Math.round(page.vp.height * (THUMB_WIDTH / page.vp.width))}px`;
+  }
+
+  // − / + : smaller or larger page pictures.
+  function setThumbSize(step) {
+    const i = THUMB_SIZES.indexOf(THUMB_WIDTH);
+    const next = THUMB_SIZES[Math.min(THUMB_SIZES.length - 1, Math.max(0, i + step))];
+    if (next === THUMB_WIDTH) return;
+    THUMB_WIDTH = next;
+    try {
+      localStorage.setItem('pdfEditor.thumbWidth', String(next));
+    } catch {
+      // not remembered (e.g. private window): fine
+    }
+    for (const [id, entry] of panel.items) {
+      const page = state.pageById.get(id);
+      if (!page) continue;
+      sizeThumb(entry, page);
+      drawThumbOverlay(id);
+      // Re-render pictures as they come into view, at the new size.
+      entry.rendered = false;
+      thumbObserver.unobserve(entry.item);
+      thumbObserver.observe(entry.item);
+    }
+    updateThumbSizeButtons();
+  }
+
+  function updateThumbSizeButtons() {
+    $('#thumb-smaller').disabled = THUMB_WIDTH === THUMB_SIZES[0];
+    $('#thumb-larger').disabled = THUMB_WIDTH === THUMB_SIZES[THUMB_SIZES.length - 1];
   }
 
   async function renderThumb(id) {
@@ -1180,6 +1221,9 @@
   });
 
   panel.toggleBtn.addEventListener('click', () => togglePanel());
+  $('#thumb-smaller').addEventListener('click', () => setThumbSize(-1));
+  $('#thumb-larger').addEventListener('click', () => setThumbSize(1));
+  updateThumbSizeButtons();
   $('#panel-close').addEventListener('click', () => togglePanel(false));
   panel.deleteBtn.addEventListener('click', deleteChecked);
   for (const btn of panel.selection.querySelectorAll('[data-turn]')) {
