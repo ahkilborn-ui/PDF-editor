@@ -86,7 +86,9 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 | Rectangle | <kbd>R</kbd> | Drag to draw a box. Tick **Fill** for a solid box. **Line** sets the border thickness. |
 | Draw | <kbd>D</kbd> | Freehand pen. **Line** sets the thickness. |
 
-- **Colors**, **Text size**, **Line** and **Fill** apply to the current tool. If you've selected an item, they change that item. For example, click a highlight in Select mode and then click a color to recolor it.
+- **Change or delete something you added**: click it, with any tool. A small menu pops up above it with colors (and **Custom** for any color), **Fill** for rectangles, **Edit text** for text boxes, and **Delete**. A highlight that runs over several lines is selected, recolored and deleted as one. Drag the selected item to move it.
+- **Resize**: a selected rectangle, white-out box, highlight or text box has small square handles on its corners and edges. Drag one to change the size and shape. Dragging a text box's handles turns it into a box its text wraps inside. The size is kept when you save and reopen.
+- **Colors**, **Text size**, **Line** and **Fill** in the toolbar apply to the current tool, or to the selected item.
 
 ### Keyboard shortcuts
 

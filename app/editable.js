@@ -112,7 +112,11 @@
         const rad = (angle * Math.PI) / 180;
         const ops = [];
         const corners = [];
-        a.text.split('\n').forEach((line, k) => {
+        // A text box given a width (by dragging its handles) wraps its lines.
+        const lines = a.w
+          ? wrapText(a.text, a.w - 2 * text.padding, (s) => font.widthOfTextAtSize(clean(s), a.size))
+          : a.text.split('\n');
+        lines.forEach((line, k) => {
           const dx = text.padding;
           const dy = text.padding + a.size * text.lineHeight * k + a.size * text.baseline;
           const [x, y] = toPdf(a.x + dx * Math.cos(turn) - dy * Math.sin(turn), a.y + dx * Math.sin(turn) + dy * Math.cos(turn));
@@ -190,5 +194,42 @@
     return { bytes: await doc.save(), items: found };
   }
 
-  window.PdfEditable = { writeItems, readItems };
+  /**
+   * Split text into lines no wider than maxWidth, breaking between words
+   * (and inside a word only when it can't fit on a line by itself), the way
+   * the browser wraps the text box on screen. measure(str) gives a width.
+   */
+  function wrapText(text, maxWidth, measure) {
+    const out = [];
+    for (const para of text.split('\n')) {
+      if (!(maxWidth > 0)) {
+        out.push(para);
+        continue;
+      }
+      let line = '';
+      for (const token of para.match(/\S+\s*|\s+/g) || []) {
+        if (measure((line + token).trimEnd()) <= maxWidth) {
+          line += token;
+          continue;
+        }
+        if (line) out.push(line.trimEnd());
+        line = '';
+        if (measure(token.trimEnd()) <= maxWidth) {
+          line = token;
+          continue;
+        }
+        for (const ch of token) {
+          if (line && measure((line + ch).trimEnd()) > maxWidth) {
+            out.push(line);
+            line = '';
+          }
+          line += ch;
+        }
+      }
+      out.push(line.trimEnd());
+    }
+    return out;
+  }
+
+  window.PdfEditable = { writeItems, readItems, wrapText };
 })();

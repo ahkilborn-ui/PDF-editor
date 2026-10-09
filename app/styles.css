@@ -393,6 +393,68 @@ body[data-tool="draw"] .annot { pointer-events: none; }
 .annot.ink { overflow: visible; }
 .annot.selected { outline: 2px dashed var(--select); outline-offset: 2px; }
 .annot.draft { pointer-events: none; }
+/* A text box sized with its handles: the text wraps inside it. */
+.annot.txt.boxed {
+  box-sizing: border-box;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Handles for changing the size of the selected box or text box. */
+.resize-box {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+}
+.resize-box[hidden] { display: none; }
+.resize-box .handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -6px 0 0 -6px;
+  border: 1.5px solid var(--select);
+  border-radius: 2px;
+  background: #fff;
+  pointer-events: auto;
+  touch-action: none;
+}
+.handle.nw { left: 0; top: 0; cursor: nwse-resize; }
+.handle.n { left: 50%; top: 0; cursor: ns-resize; }
+.handle.ne { left: 100%; top: 0; cursor: nesw-resize; }
+.handle.e { left: 100%; top: 50%; cursor: ew-resize; }
+.handle.se { left: 100%; top: 100%; cursor: nwse-resize; }
+.handle.s { left: 50%; top: 100%; cursor: ns-resize; }
+.handle.sw { left: 0; top: 100%; cursor: nesw-resize; }
+.handle.w { left: 0; top: 50%; cursor: ew-resize; }
+
+/* Menu that pops up over the selected item. */
+.item-menu {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .25);
+  color: var(--text);
+  font: 13px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: nowrap;
+  user-select: none;
+  cursor: default;
+}
+.item-menu[hidden] { display: none; }
+.item-swatches { display: grid; grid-template-columns: repeat(8, 18px); gap: 3px; }
+.item-custom { display: flex; }
+.item-custom input { width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: 4px; background: none; cursor: pointer; }
+.item-sep { align-self: stretch; width: 1px; background: var(--border); }
+.item-fill { display: inline-flex; gap: 4px; align-items: center; cursor: pointer; }
+.item-fill[hidden], .item-btn[hidden] { display: none; }
+.item-btn { height: 30px; padding: 0 10px; font-size: 13px; }
+.item-btn svg { width: 15px; height: 15px; margin-right: 4px; vertical-align: -3px; }
+.item-sep[hidden] { display: none; }
 
 /* Off-screen area where Word files are laid out before being turned into PDF pages. */
 .convert-host {

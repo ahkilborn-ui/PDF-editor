@@ -1080,7 +1080,7 @@
       ctx.fillStyle = a.color;
       ctx.font = `${a.size}px ${FONT_FAMILY}`;
       ctx.textBaseline = 'alphabetic';
-      a.text.split('\n').forEach((line, k) => {
+      textLines(a, (s) => ctx.measureText(s).width).forEach((line, k) => {
         ctx.fillText(line, TEXT_PADDING, TEXT_PADDING + a.size * TEXT_LINE_HEIGHT * k + a.size * BASELINE_RATIO);
       });
     }
@@ -1294,6 +1294,7 @@
       if (a.page === page.id) layer.append(createAnnotEl(a));
     }
     scheduleThumbOverlay(page.id);
+    updateSelectionUi();
   }
 
   function redrawPageOf(annot) {
@@ -1333,6 +1334,12 @@
         el.textContent = a.text;
         el.style.fontSize = `${a.size * z}px`;
         el.style.color = a.color;
+        if (a.w) {
+          // Sized by dragging its handles: the text wraps inside the box.
+          el.classList.add('boxed');
+          el.style.width = `${a.w * z}px`;
+          el.style.minHeight = `${a.h * z}px`;
+        }
         // Text on a page that was rotated after typing turns with the page.
         if (a.rot) el.style.transform = `rotate(${a.rot}deg)`;
       } else {
@@ -1349,8 +1356,21 @@
       }
     }
     el.dataset.id = a.id;
-    if (a.id === state.selectedId) el.classList.add('selected');
+    if (selectedItems().includes(a)) el.classList.add('selected');
     return el;
+  }
+
+  // The lines a text item shows, wrapped to its box if it has a set width.
+  function textLines(a, measure) {
+    return a.w ? window.PdfEditable.wrapText(a.text, a.w - 2 * TEXT_PADDING, measure) : a.text.split('\n');
+  }
+
+  // The selected item, plus the other lines of a highlight made in one drag
+  // (they're handled together: one click selects, recolors or deletes them all).
+  function selectedItems() {
+    const a = getAnnot(state.selectedId);
+    if (!a) return [];
+    return a.group != null ? state.annots.filter((x) => x.group === a.group && x.page === a.page) : [a];
   }
 
   function annotEl(id) {
@@ -1369,14 +1389,18 @@
     } else {
       el.replaceWith(createAnnotEl(a));
     }
+    updateSelectionUi();
   }
 
   function select(id) {
-    if (state.selectedId === id) return;
-    if (state.selectedId != null) annotEl(state.selectedId)?.classList.remove('selected');
+    if (state.selectedId === id) {
+      updateSelectionUi();
+      return;
+    }
+    for (const x of selectedItems()) annotEl(x.id)?.classList.remove('selected');
     state.selectedId = id;
     if (id != null) {
-      annotEl(id)?.classList.add('selected');
+      for (const x of selectedItems()) annotEl(x.id)?.classList.add('selected');
       const a = getAnnot(id);
       if (a) {
         showColor(a.color);
@@ -1390,16 +1414,17 @@
       ui.fillInput.checked = state.rectFill;
     }
     updateButtons();
+    updateSelectionUi();
   }
 
   function deleteSelected() {
-    const a = getAnnot(state.selectedId);
-    if (!a) return;
-    if (state.editingId === a.id) state.editingId = null;
+    const items = selectedItems();
+    if (!items.length) return;
+    if (items.some((x) => x.id === state.editingId)) state.editingId = null;
     checkpoint();
-    state.annots = state.annots.filter((x) => x !== a);
+    state.annots = state.annots.filter((x) => !items.includes(x));
     state.selectedId = null;
-    redrawPageOf(a);
+    redrawPageOf(items[0]);
     updateButtons();
   }
 
@@ -1409,6 +1434,272 @@
     state.annots.push(a);
     redrawPageOf(a);
     return a;
+  }
+
+  // ------------------------------------------- item menu and resize handles
+  //
+  // Clicking an added item (with any tool) selects it and shows a small menu
+  // above it: colors, Fill (rectangles), Edit text (text boxes) and Delete.
+  // Boxes and text boxes also get handles on their edges and corners; drag
+  // one to change the size and shape. A text box given a size wraps its text.
+
+  const RESIZABLE = new Set(['text', 'rect', 'whiteout', 'highlight']);
+  const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
+
+  const selUi = {
+    menu: document.createElement('div'),
+    box: document.createElement('div'),
+    swatches: document.createElement('div'),
+    custom: document.createElement('input'),
+    fill: document.createElement('label'),
+    fillInput: document.createElement('input'),
+    edit: document.createElement('button'),
+    del: document.createElement('button'),
+    dragging: false,
+    colorLive: false,
+  };
+
+  (function buildSelectionUi() {
+    const { menu, box, swatches, custom, fill, fillInput, edit, del } = selUi;
+    menu.className = 'item-menu';
+    menu.setAttribute('role', 'toolbar');
+    menu.setAttribute('aria-label', 'Selected item');
+    menu.hidden = true;
+    swatches.className = 'item-swatches';
+    for (const color of PALETTE) {
+      const sw = document.createElement('button');
+      sw.type = 'button';
+      sw.className = 'swatch';
+      sw.dataset.color = color;
+      sw.style.background = color;
+      sw.title = color;
+      sw.setAttribute('aria-label', `Color ${color}`);
+      sw.addEventListener('click', () => setSelectedColor(color, true));
+      swatches.append(sw);
+    }
+    const customWrap = document.createElement('label');
+    customWrap.className = 'item-custom';
+    customWrap.title = 'Pick any color';
+    custom.type = 'color';
+    custom.setAttribute('aria-label', 'Pick any color');
+    custom.addEventListener('input', () => {
+      setSelectedColor(custom.value, !selUi.colorLive); // one undo step per visit to the picker
+      selUi.colorLive = true;
+    });
+    custom.addEventListener('change', () => { selUi.colorLive = false; });
+    customWrap.append(custom);
+
+    fill.className = 'item-fill';
+    fill.title = 'Fill the rectangle with its color';
+    fillInput.type = 'checkbox';
+    fill.append(fillInput, document.createTextNode('Fill'));
+    fillInput.addEventListener('change', () => {
+      const a = getAnnot(state.selectedId);
+      if (a?.type !== 'rect') return;
+      checkpoint();
+      a.fill = fillInput.checked;
+      refreshAnnot(a);
+    });
+
+    edit.type = 'button';
+    edit.className = 'btn item-btn';
+    edit.textContent = 'Edit text';
+    edit.addEventListener('click', () => {
+      const a = getAnnot(state.selectedId);
+      if (a?.type === 'text') startEditing(a.id);
+    });
+
+    del.type = 'button';
+    del.className = 'btn danger item-btn';
+    del.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M6.5 4V2.5h3V4M4.5 4l.7 9.5h5.6l.7-9.5M7 6.5v5M9 6.5v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>Delete';
+    del.title = 'Delete (Delete key)';
+    del.addEventListener('click', deleteSelected);
+
+    const sep = () => Object.assign(document.createElement('span'), { className: 'item-sep' });
+    menu.append(swatches, customWrap, sep(), fill, edit, sep(), del);
+
+    box.className = 'resize-box';
+    box.hidden = true;
+    for (const dir of HANDLES) {
+      const h = document.createElement('div');
+      h.className = `handle ${dir}`;
+      h.dataset.dir = dir;
+      h.title = 'Drag to change the size';
+      box.append(h);
+      attachResize(h, dir);
+    }
+
+    // Presses on the menu and handles are theirs, not the page's (which
+    // would start drawing, or deselect).
+    for (const el of [menu, box]) {
+      for (const type of ['pointerdown', 'mousedown', 'click', 'dblclick']) {
+        el.addEventListener(type, (e) => e.stopPropagation());
+      }
+    }
+  })();
+
+  function setSelectedColor(color, commit) {
+    const items = selectedItems();
+    if (!items.length) return;
+    color = color.toLowerCase();
+    if (commit) checkpoint();
+    for (const a of items) {
+      a.color = color;
+      refreshAnnot(a);
+    }
+    showColor(color);
+  }
+
+  // The item under the pointer on this page, topmost first (works whatever
+  // the tool, even where items let clicks through to the text).
+  function annotAt(page, e) {
+    const slop = 4;
+    const pt = pointInPage(page, e);
+    const list = state.annots.filter((a) => a.page === page.id);
+    for (let i = list.length - 1; i >= 0; i--) {
+      const a = list[i];
+      if (a.type === 'ink') {
+        const tol = a.width / 2 + slop / state.zoom;
+        const pts = a.points.length > 1 ? a.points : [a.points[0], a.points[0]];
+        for (let k = 1; k < pts.length; k++) {
+          if (distToSegment(pt, pts[k - 1], pts[k]) <= tol) return a.id;
+        }
+      } else {
+        const r = annotEl(a.id)?.getBoundingClientRect();
+        if (r && e.clientX >= r.left - slop && e.clientX <= r.right + slop && e.clientY >= r.top - slop && e.clientY <= r.bottom + slop) {
+          return a.id;
+        }
+      }
+    }
+    return null;
+  }
+
+  function distToSegment(p, [x1, y1], [x2, y2]) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const len = dx * dx + dy * dy;
+    const t = len ? Math.max(0, Math.min(1, ((p.x - x1) * dx + (p.y - y1) * dy) / len)) : 0;
+    return Math.hypot(p.x - (x1 + t * dx), p.y - (y1 + t * dy));
+  }
+
+  // Show (or hide) the menu and handles for the current selection.
+  function updateSelectionUi() {
+    const { menu, box } = selUi;
+    const items = selectedItems();
+    const a = items[0] && getAnnot(state.selectedId);
+    const page = a && state.pageById.get(a.page);
+    const els = items.map((x) => annotEl(x.id)).filter(Boolean);
+    if (!a || !page || !els.length || state.editingId != null || !page.wrap.isConnected) {
+      menu.hidden = true;
+      box.hidden = true;
+      return;
+    }
+    if (menu.parentNode !== page.el) page.el.append(box, menu);
+
+    // Handles: one box, or one text box, that isn't turned sideways.
+    const z = state.zoom;
+    const resizable = items.length === 1 && RESIZABLE.has(a.type) && !a.rot;
+    box.hidden = !resizable;
+    box.classList.toggle('text-box', a.type === 'text');
+    if (resizable) {
+      const r = itemRect(a);
+      Object.assign(box.style, { left: `${r.x * z}px`, top: `${r.y * z}px`, width: `${r.w * z}px`, height: `${r.h * z}px` });
+    }
+
+    menu.hidden = selUi.dragging;
+    if (menu.hidden) return;
+    selUi.fill.hidden = a.type !== 'rect';
+    selUi.fillInput.checked = !!a.fill;
+    selUi.edit.hidden = a.type !== 'text';
+    selUi.fill.previousElementSibling.hidden = selUi.fill.hidden && selUi.edit.hidden; // the divider before them
+    selUi.custom.value = a.color;
+    for (const sw of selUi.swatches.children) sw.classList.toggle('active', sw.dataset.color === a.color.toLowerCase());
+
+    // Above the item, or below it if there's no room; kept on the page.
+    const pr = page.el.getBoundingClientRect();
+    let top = Infinity;
+    let bottom = -Infinity;
+    let left = Infinity;
+    let right = -Infinity;
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      top = Math.min(top, r.top - pr.top);
+      bottom = Math.max(bottom, r.bottom - pr.top);
+      left = Math.min(left, r.left - pr.left);
+      right = Math.max(right, r.right - pr.left);
+    }
+    const mw = menu.offsetWidth;
+    const mh = menu.offsetHeight;
+    const gap = resizable ? 12 : 8;
+    const y = top - mh - gap >= 0 ? top - mh - gap : bottom + gap;
+    const x = Math.max(0, Math.min((left + right) / 2 - mw / 2, pr.width - mw));
+    menu.style.left = `${x}px`;
+    menu.style.top = `${y}px`;
+  }
+
+  // An item's box in page units. A text box without a set size measures
+  // its text as shown.
+  function itemRect(a) {
+    if (a.type !== 'text') return { x: a.x, y: a.y, w: a.w, h: a.h };
+    if (a.w) {
+      const el = annotEl(a.id);
+      return { x: a.x, y: a.y, w: a.w, h: el ? el.offsetHeight / state.zoom : a.h };
+    }
+    const el = annotEl(a.id);
+    return { x: a.x, y: a.y, w: el ? el.offsetWidth / state.zoom : 10, h: el ? el.offsetHeight / state.zoom : a.size };
+  }
+
+  function attachResize(handle, dir) {
+    let drag = null;
+    handle.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const a = getAnnot(state.selectedId);
+      const page = a && state.pageById.get(a.page);
+      if (!page) return;
+      e.preventDefault();
+      finishEditing();
+      const base = itemRect(a);
+      if (a.type === 'text' && !a.w) base.h = Math.max(base.h, a.size * TEXT_LINE_HEIGHT + 2 * TEXT_PADDING);
+      drag = { a, page, base, start: pointInPage(page, e), moved: false };
+      handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      const { a, base } = drag;
+      const pt = pointInPage(drag.page, e);
+      const dx = pt.x - drag.start.x;
+      const dy = pt.y - drag.start.y;
+      if (!drag.moved) {
+        if (Math.hypot(dx, dy) < 2 / state.zoom) return;
+        drag.moved = true;
+        checkpoint();
+        selUi.dragging = true;
+      }
+      const minW = a.type === 'text' ? a.size + 2 * TEXT_PADDING : 4;
+      const minH = a.type === 'text' ? a.size * TEXT_LINE_HEIGHT + 2 * TEXT_PADDING : 4;
+      let { x, y, w, h } = base;
+      if (dir.includes('e')) w = Math.max(minW, base.w + dx);
+      if (dir.includes('w')) {
+        w = Math.max(minW, base.w - dx);
+        x = base.x + base.w - w;
+      }
+      if (dir.includes('s')) h = Math.max(minH, base.h + dy);
+      if (dir.includes('n')) {
+        h = Math.max(minH, base.h - dy);
+        y = base.y + base.h - h;
+      }
+      Object.assign(a, { x: round(x), y: round(y), w: round(w), h: round(h) });
+      refreshAnnot(a);
+    });
+    const end = (e) => {
+      if (!drag) return;
+      drag = null;
+      if (handle.hasPointerCapture(e.pointerId)) handle.releasePointerCapture(e.pointerId);
+      selUi.dragging = false;
+      updateSelectionUi();
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
   }
 
   // -------------------------------------------------------- text editing
@@ -1428,6 +1719,7 @@
       el.contentEditable = 'true';
     }
     el.spellcheck = false;
+    updateSelectionUi();
     el.focus();
     if (caretAtEnd) {
       const range = document.createRange();
@@ -1479,6 +1771,7 @@
     delete a.isNew;
     redrawPageOf(a);
     updateButtons();
+    updateSelectionUi();
   }
 
   // -------------------------------------------------------- pointer input
@@ -1502,14 +1795,18 @@
       if (id != null && id === state.editingId) return; // clicks inside the box being edited
       const pt = pointInPage(page, e);
       const tool = state.tool;
+      // With a drawing tool, an existing item under the pointer: a click
+      // (no drag) selects it, and dragging the selected item moves it.
+      const hitId = tool === 'select' ? null : annotAt(page, e);
+      const hitSelected = hitId != null && tool !== 'text' && selectedItems().some((x) => x.id === hitId);
 
-      if (tool === 'select') {
-        if (id == null) return;
+      if (tool === 'select' || hitSelected) {
+        if (id == null && !hitSelected) return;
         e.preventDefault();
         finishEditing();
-        select(id);
-        const a = getAnnot(id);
-        drag = { kind: 'move', a, start: pt, orig: JSON.stringify(a), moved: false };
+        if (!hitSelected) select(id);
+        const items = selectedItems();
+        drag = { kind: 'move', items, start: pt, orig: JSON.stringify(items), moved: false };
       } else if (tool === 'text') {
         e.preventDefault();
         if (id != null && getAnnot(id)?.type === 'text') {
@@ -1531,7 +1828,7 @@
         finishEditing();
         select(null);
         const anchor = hitText(page, pt, true);
-        drag = { kind: 'textHighlight', anchor, focus: anchor, drafts: [] };
+        drag = { kind: 'textHighlight', anchor, focus: anchor, drafts: [], start: pt, last: pt, hitId };
       } else if (DRAG_RECT_TOOLS.has(tool)) {
         e.preventDefault();
         finishEditing();
@@ -1541,7 +1838,7 @@
         el.classList.add('draft');
         if (tool === 'whiteout') el.style.outline = '1px dashed #999';
         layer.append(el);
-        drag = { kind: 'rect', tool, start: pt, el, cur: pt };
+        drag = { kind: 'rect', tool, start: pt, el, cur: pt, hitId };
       } else if (tool === 'draw') {
         e.preventDefault();
         finishEditing();
@@ -1558,7 +1855,7 @@
         line.setAttribute('stroke-linejoin', 'round');
         svg.append(line);
         layer.append(svg);
-        drag = { kind: 'ink', points: [[round(pt.x), round(pt.y)]], svg, line };
+        drag = { kind: 'ink', points: [[round(pt.x), round(pt.y)]], svg, line, hitId };
       }
       if (drag) host.setPointerCapture(e.pointerId);
     });
@@ -1571,6 +1868,7 @@
       }
       const pt = pointInPage(page, e);
       if (drag.kind === 'textHighlight') {
+        drag.last = pt;
         drag.focus = hitText(page, pt, false) || drag.focus;
         drag.moved = true;
         showHighlightDrafts(page, drag, textSelectionRects(page, drag.anchor, drag.focus));
@@ -1584,9 +1882,10 @@
           drag.moved = true;
           checkpoint();
           drag.base = JSON.parse(drag.orig);
+          selUi.dragging = true; // the menu steps aside while moving
         }
-        moveAnnot(drag.a, drag.base, dx, dy);
-        refreshAnnot(drag.a);
+        drag.items.forEach((x, i) => moveAnnot(x, drag.base[i], dx, dy));
+        drag.items.forEach(refreshAnnot);
       } else if (drag.kind === 'rect') {
         drag.cur = pt;
         const r = normRect(drag.start, pt);
@@ -1603,20 +1902,30 @@
       const d = drag;
       drag = null;
       if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
-      if (d.kind === 'textHighlight') {
+      const isClick = (a, b) => Math.hypot(a.x - b.x, a.y - b.y) < 3 / state.zoom;
+      if (d.kind === 'move') {
+        selUi.dragging = false;
+        updateSelectionUi();
+      } else if (d.kind === 'textHighlight') {
         showHighlightDrafts(page, d, []);
-        if (d.moved && e.type !== 'pointercancel') addHighlights(page, textSelectionRects(page, d.anchor, d.focus));
+        if (d.hitId != null && isClick(d.start, d.last)) select(d.hitId);
+        else if (d.moved && e.type !== 'pointercancel') addHighlights(page, textSelectionRects(page, d.anchor, d.focus));
       } else if (d.kind === 'rect') {
         d.el.remove();
         const r = normRect(d.start, d.cur);
-        if (r.w > 2 && r.h > 2) {
+        if (d.hitId != null && isClick(d.start, d.cur)) {
+          select(d.hitId);
+        } else if (r.w > 2 && r.h > 2) {
           const a = { page: page.id, type: d.tool, ...r, color: state.colors[d.tool] };
           if (d.tool === 'rect') Object.assign(a, { width: state.lineWidth, fill: state.rectFill });
           addAnnot(a);
         }
       } else if (d.kind === 'ink') {
         d.svg.remove();
-        if (e.type !== 'pointercancel') {
+        const [x0, y0] = d.points[0];
+        if (d.hitId != null && d.points.every(([x, y]) => isClick({ x: x0, y: y0 }, { x, y }))) {
+          select(d.hitId);
+        } else if (e.type !== 'pointercancel') {
           addAnnot({ page: page.id, type: 'ink', points: d.points, color: state.colors.draw, width: state.lineWidth });
         }
       }
@@ -1844,8 +2153,10 @@
   function addHighlights(page, rects) {
     if (!rects.length) return;
     checkpoint();
+    // The lines of one highlight stay together (one click selects them all).
+    const group = rects.length > 1 ? `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}` : null;
     for (const r of rects) {
-      state.annots.push({ id: state.nextId++, page: page.id, type: 'highlight', ...r, color: state.colors.highlight });
+      state.annots.push({ id: state.nextId++, page: page.id, type: 'highlight', ...r, color: state.colors.highlight, ...(group ? { group } : {}) });
     }
     drawAnnots(page);
   }
@@ -1956,12 +2267,14 @@
   function applyColor(color, commit) {
     color = color.toLowerCase();
     showColor(color);
-    const a = getAnnot(state.selectedId);
-    if (a) {
+    const items = selectedItems();
+    if (items.length) {
       if (commit) checkpoint();
-      a.color = color;
-      state.colors[toolFor(a.type)] = color;
-      refreshAnnot(a);
+      for (const a of items) {
+        a.color = color;
+        refreshAnnot(a);
+      }
+      state.colors[toolFor(items[0].type)] = color;
     }
     state.colors[state.tool] = color;
     updateHighlightPreview();
@@ -3230,15 +3543,18 @@
   // Arrow keys move the selected item; a burst of presses is one undo step.
   let lastNudge = { id: null, time: 0 };
   function nudgeSelected(key, step) {
-    const a = getAnnot(state.selectedId);
+    const items = selectedItems();
+    const a = items[0];
     if (!a) return;
     const now = Date.now();
     if (lastNudge.id !== a.id || now - lastNudge.time > 1000) checkpoint();
     lastNudge = { id: a.id, time: now };
     const dx = key === 'ArrowLeft' ? -step : key === 'ArrowRight' ? step : 0;
     const dy = key === 'ArrowUp' ? -step : key === 'ArrowDown' ? step : 0;
-    moveAnnot(a, JSON.parse(JSON.stringify(a)), dx, dy);
-    refreshAnnot(a);
+    for (const x of items) {
+      moveAnnot(x, JSON.parse(JSON.stringify(x)), dx, dy);
+      refreshAnnot(x);
+    }
   }
 
   // --- copy, cut and paste of added items (Ctrl+C / Ctrl+X / Ctrl+V)
@@ -3323,6 +3639,7 @@
     const copy = JSON.parse(JSON.stringify(item));
     delete copy.id;
     delete copy.isNew;
+    delete copy.group;
     const offset = 12;
     moveAnnot(copy, JSON.parse(JSON.stringify(copy)), offset, offset);
     copy.page = page.id;
