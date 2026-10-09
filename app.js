@@ -763,7 +763,9 @@
   // "Delete pages" button drops down), drag pages to reorder them, or delete
   // a numbered range. Deletions are confirmed first and can be undone.
 
-  const THUMB_WIDTH = 150;
+  // Page pictures fill the panel's width (panel 260px, minus padding, a scroll bar
+  // and the highlight outline), so edits on them are easier to see.
+  const THUMB_WIDTH = 212;
 
   const panel = {
     el: $('#page-panel'),
