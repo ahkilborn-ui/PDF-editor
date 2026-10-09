@@ -584,6 +584,7 @@
         viewport: page.vp,
       });
       await layer.render();
+      page.textIndex = null;
       if (!page.textLayer.dataset.listening) {
         page.textLayer.dataset.listening = '1';
         page.textLayer.addEventListener('mousedown', () => page.textLayer.classList.add('selecting'));
@@ -1347,12 +1348,8 @@
     const host = page.el;
     let drag = null;
 
-    // Highlight tool pressed on text: let the browser select it; the
-    // selection becomes the highlight when the mouse is released.
-    const onText = (e) => state.tool === 'highlight' && e.target.closest('.textLayer span, .ocrLayer span');
-
     host.addEventListener('pointerdown', (e) => {
-      if (e.button !== 0 || onText(e)) return;
+      if (e.button !== 0) return;
       if (state.tool === 'select' && !e.target.closest('.annot')) return;
       const target = e.target.closest('.annot');
       const id = target ? Number(target.dataset.id) : null;
@@ -1382,6 +1379,13 @@
         });
         startEditing(a.id);
         return;
+      } else if (tool === 'highlight' && hitText(page, pt, true)) {
+        // Pressed on or near text: highlight letters, following the lines.
+        e.preventDefault();
+        finishEditing();
+        select(null);
+        const anchor = hitText(page, pt, true);
+        drag = { kind: 'textHighlight', anchor, focus: anchor, drafts: [] };
       } else if (DRAG_RECT_TOOLS.has(tool)) {
         e.preventDefault();
         finishEditing();
@@ -1414,8 +1418,18 @@
     });
 
     host.addEventListener('pointermove', (e) => {
-      if (!drag) return;
+      if (!drag) {
+        // Highlight tool: show a text cursor near text, a crosshair elsewhere.
+        if (state.tool === 'highlight') host.style.cursor = hitText(page, pointInPage(page, e), true) ? 'text' : 'crosshair';
+        return;
+      }
       const pt = pointInPage(page, e);
+      if (drag.kind === 'textHighlight') {
+        drag.focus = hitText(page, pt, false) || drag.focus;
+        drag.moved = true;
+        showHighlightDrafts(page, drag, textSelectionRects(page, drag.anchor, drag.focus));
+        return;
+      }
       if (drag.kind === 'move') {
         const dx = pt.x - drag.start.x;
         const dy = pt.y - drag.start.y;
@@ -1443,7 +1457,10 @@
       const d = drag;
       drag = null;
       if (host.hasPointerCapture(e.pointerId)) host.releasePointerCapture(e.pointerId);
-      if (d.kind === 'rect') {
+      if (d.kind === 'textHighlight') {
+        showHighlightDrafts(page, d, []);
+        if (d.moved && e.type !== 'pointercancel') addHighlights(page, textSelectionRects(page, d.anchor, d.focus));
+      } else if (d.kind === 'rect') {
         d.el.remove();
         const r = normRect(d.start, d.cur);
         if (r.w > 2 && r.h > 2) {
@@ -1464,7 +1481,6 @@
     // Stop the browser from moving focus / starting a text selection when we
     // handle the press ourselves (otherwise a new text box would lose focus).
     host.addEventListener('mousedown', (e) => {
-      if (onText(e)) return;
       if (state.tool === 'select' && !e.target.closest('.annot')) return;
       const target = e.target.closest('.annot');
       if (target && Number(target.dataset.id) === state.editingId) return;
@@ -1474,6 +1490,12 @@
     // Double-click a text box to edit it. (The pointer is captured while
     // pressing, so the event's target is the layer; look at what's under it.)
     host.addEventListener('dblclick', (e) => {
+      if (state.tool === 'highlight') {
+        // Double-click a word to highlight it.
+        const hit = hitText(page, pointInPage(page, e), true);
+        if (hit) addHighlights(page, wordRects(page, hit));
+        return;
+      }
       if (state.tool !== 'select') return;
       const target = document.elementsFromPoint(e.clientX, e.clientY).find((el) => el.matches('.annot.txt'));
       if (target) startEditing(Number(target.dataset.id));
@@ -1521,15 +1543,166 @@
 
   // ------------------------------------------------ highlight selected text
 
-  // Highlight tool: when a drag over text ends, turn the selected letters
-  // into highlights.
-  // (Done right away, not after a delay, so a quick next click can't change
-  // the selection first.)
-  document.addEventListener('mouseup', () => {
-    if (state.tool !== 'highlight') return;
-    const sel = window.getSelection();
-    if (sel && !sel.isCollapsed && ui.pages.contains(sel.anchorNode)) highlightSelection();
-  });
+  // ------------------------------------------- text-aware highlighter
+  //
+  // The Highlight tool works from the positions of the page's letters rather
+  // than the browser's text selection (which has tiny targets and jumps
+  // around, and runs across columns). Letters are grouped into lines, and
+  // each line is split where there's a wide gap (between columns). A drag
+  // highlights from the letter where it started to the letter nearest the
+  // pointer, only within the column(s) the drag covers.
+  //
+  // Positions are worked out with the page turned back upright, so rotated
+  // pages behave the same.
+
+  function textIndex(page) {
+    if (page.textIndex) return page.textIndex;
+    const q = (((page.vp.rotation / 90) % 4) + 4) % 4;
+    const W = page.vp.width;
+    const H = page.vp.height;
+    const upright = (x, y) => turnPoint(x, y, W, H, (4 - q) % 4);
+    const pr = page.el.getBoundingClientRect();
+    const z = state.zoom;
+    const range = document.createRange();
+    const chars = [];
+    for (const span of page.el.querySelectorAll('.textLayer span, .ocrLayer span')) {
+      const node = span.firstChild;
+      if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+      for (let i = 0; i < node.data.length; i++) {
+        range.setStart(node, i);
+        range.setEnd(node, i + 1);
+        const r = range.getBoundingClientRect();
+        if (r.width < 0.1 || r.height < 0.1) continue;
+        const [ax, ay] = upright((r.left - pr.left) / z, (r.top - pr.top) / z);
+        const [bx, by] = upright((r.right - pr.left) / z, (r.bottom - pr.top) / z);
+        const c = { x0: Math.min(ax, bx), x1: Math.max(ax, bx), y0: Math.min(ay, by), y1: Math.max(ay, by), space: !node.data[i].trim() };
+        c.h = c.y1 - c.y0;
+        c.cy = (c.y0 + c.y1) / 2;
+        chars.push(c);
+      }
+    }
+    // Lines: letters whose middles are at about the same height.
+    chars.sort((a, b) => a.cy - b.cy);
+    const lines = [];
+    for (const c of chars) {
+      const line = lines[lines.length - 1];
+      if (line && Math.abs(c.cy - line.cy) < 0.5 * Math.min(c.h, line.h)) line.chars.push(c);
+      else lines.push({ cy: c.cy, h: c.h, chars: [c] });
+    }
+    // Segments: pieces of a line separated by a wide gap (column gutters).
+    const segs = [];
+    lines.forEach((line, li) => {
+      line.chars.sort((a, b) => a.x0 - b.x0);
+      let seg = null;
+      for (const c of line.chars) {
+        if (!seg || c.x0 - seg.x1 > Math.max(1.5 * c.h, 8)) {
+          seg = { line: li, chars: [], x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1 };
+          segs.push(seg);
+        }
+        c.line = li;
+        seg.chars.push(c);
+        seg.x1 = Math.max(seg.x1, c.x1);
+        seg.y0 = Math.min(seg.y0, c.y0);
+        seg.y1 = Math.max(seg.y1, c.y1);
+      }
+    });
+    page.textIndex = { segs: segs.filter((sg) => sg.chars.some((c) => !c.space)), upright, q, uW: q % 2 ? H : W, uH: q % 2 ? W : H };
+    return page.textIndex;
+  }
+
+  // The letter position nearest a point: { seg, k } meaning "before letter k
+  // of seg". With `strict`, only if the point is on or close to the text
+  // (a generous margin above, below and beside each line).
+  function hitText(page, pt, strict) {
+    const idx = textIndex(page);
+    if (!idx.segs.length) return null;
+    const [x, y] = idx.upright(pt.x, pt.y);
+    let best = null;
+    let bestScore = Infinity;
+    for (const sg of idx.segs) {
+      const h = sg.y1 - sg.y0;
+      const dy = y < sg.y0 ? sg.y0 - y : y > sg.y1 ? y - sg.y1 : 0;
+      const dx = x < sg.x0 ? sg.x0 - x : x > sg.x1 ? x - sg.x1 : 0;
+      if (strict && (dy > 0.6 * h || dx > 1.2 * h)) continue;
+      const score = dy * 3 + dx; // stick to the nearest line
+      if (score < bestScore) {
+        best = sg;
+        bestScore = score;
+      }
+    }
+    if (!best) return null;
+    let k = best.chars.findIndex((c) => x < (c.x0 + c.x1) / 2);
+    if (k < 0) k = best.chars.length;
+    return { seg: best, k };
+  }
+
+  // Back from upright positions to the page as displayed.
+  function displayRect(idx, x0, y0, x1, y1) {
+    const [ax, ay] = turnPoint(x0, y0, idx.uW, idx.uH, idx.q);
+    const [bx, by] = turnPoint(x1, y1, idx.uW, idx.uH, idx.q);
+    return { x: Math.min(ax, bx), y: Math.min(ay, by), w: Math.abs(bx - ax), h: Math.abs(by - ay) };
+  }
+
+  // One rectangle per line piece (separately in each column) for the letters from `a` to `b`.
+  function textSelectionRects(page, a, b) {
+    const idx = textIndex(page);
+    if (!a || !b) return [];
+    // Only the column(s) the drag covers, between its top and bottom lines.
+    const left = Math.min(a.seg.x0, b.seg.x0);
+    const right = Math.max(a.seg.x1, b.seg.x1);
+    const top = Math.min(a.seg.y0, b.seg.y0);
+    const bottom = Math.max(a.seg.y1, b.seg.y1);
+    const segs = idx.segs
+      .filter((sg) => sg === a.seg || sg === b.seg ||
+        (sg.x1 > left && sg.x0 < right && sg.y1 > top && sg.y0 < bottom))
+      .sort((p, q) => p.line - q.line || p.x0 - q.x0);
+    let from = { i: segs.indexOf(a.seg), k: a.k };
+    let to = { i: segs.indexOf(b.seg), k: b.k };
+    if (to.i < from.i || (to.i === from.i && to.k < from.k)) [from, to] = [to, from];
+    const rects = [];
+    for (let i = from.i; i <= to.i; i++) {
+      const sg = segs[i];
+      const picked = sg.chars.slice(i === from.i ? from.k : 0, i === to.i ? to.k : sg.chars.length).filter((c) => !c.space);
+      if (!picked.length) continue;
+      rects.push(displayRect(idx,
+        Math.min(...picked.map((c) => c.x0)), Math.min(...picked.map((c) => c.y0)),
+        Math.max(...picked.map((c) => c.x1)), Math.max(...picked.map((c) => c.y1))));
+    }
+    return rects;
+  }
+
+  // The word around a letter position.
+  function wordRects(page, hit) {
+    const chars = hit.seg.chars;
+    let i = Math.min(hit.k, chars.length - 1);
+    if (chars[i].space && i > 0 && !chars[i - 1].space) i--;
+    if (chars[i].space) return [];
+    let s0 = i;
+    let s1 = i;
+    while (s0 > 0 && !chars[s0 - 1].space) s0--;
+    while (s1 < chars.length - 1 && !chars[s1 + 1].space) s1++;
+    return textSelectionRects(page, { seg: hit.seg, k: s0 }, { seg: hit.seg, k: s1 + 1 });
+  }
+
+  // Live preview of the highlight while dragging.
+  function showHighlightDrafts(page, drag, rects) {
+    for (const el of drag.drafts) el.remove();
+    drag.drafts = rects.map((r) => {
+      const el = createAnnotEl({ type: 'highlight', ...r, color: state.colors.highlight });
+      el.classList.add('draft');
+      page.annotLayer.append(el);
+      return el;
+    });
+  }
+
+  function addHighlights(page, rects) {
+    if (!rects.length) return;
+    checkpoint();
+    for (const r of rects) {
+      state.annots.push({ id: state.nextId++, page: page.id, type: 'highlight', ...r, color: state.colors.highlight });
+    }
+    drawAnnots(page);
+  }
 
   // While selecting with the Highlight tool, the selection shows in the highlight color.
   function updateHighlightPreview() {
@@ -1602,6 +1775,7 @@
     finishEditing();
     state.tool = tool;
     document.body.dataset.tool = tool;
+    for (const p of allPages()) p.el.style.cursor = '';
     ui.toolButtons.forEach((b) => b.classList.toggle('active', b.dataset.tool === tool));
     if (tool !== 'select') select(null);
     showColor(state.colors[tool]);
@@ -1800,6 +1974,7 @@
   const measureCtx = document.createElement('canvas').getContext('2d');
 
   function drawOcrLayer(page) {
+    page.textIndex = null;
     const layer = page.ocrLayer;
     layer.textContent = '';
     const words = state.ocr[page.id];
@@ -2515,7 +2690,7 @@
   }
 
   // Exposed for automated tests / debugging in the console.
-  window.pdfEditor = { state, panel, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel };
+  window.pdfEditor = { state, panel, textIndex, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel };
 
   showColor(state.colors[state.tool]);
   updateHighlightPreview();

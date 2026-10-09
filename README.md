@@ -81,7 +81,7 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
 |---|---|---|
 | Select | <kbd>V</kbd> | Select and copy text. Click an item you added to select it, drag to move it, double-click text to edit it. |
 | Text | <kbd>T</kbd> | Click where you want the text and start typing. <kbd>Enter</kbd> starts a new line, <kbd>Esc</kbd> finishes. |
-| Highlight | <kbd>H</kbd> | Drag across text to highlight exactly the letters you drag over, like a highlighter pen. It can start and stop mid-word and run across lines. Double-click a word to highlight just that word. Drag over an area with no text, such as a picture or a scan, to highlight a box. |
+| Highlight | <kbd>H</kbd> | Drag across text to highlight exactly the letters you drag over, like a highlighter pen. You don't need to hit the letters exactly: when the cursor shows a text I-beam, you're close enough. The highlight follows the line nearest your cursor and stays in the column you're working in. Double-click a word to highlight just that word. Where the cursor is a crosshair, such as over a picture or a scan, dragging highlights a box. |
 | White-out | <kbd>W</kbd> | Drag to cover content with a solid box. White by default, but you can change the color. |
 | Rectangle | <kbd>R</kbd> | Drag to draw a box. Tick **Fill** for a solid box. **Line** sets the border thickness. |
 | Draw | <kbd>D</kbd> | Freehand pen. **Line** sets the thickness. |

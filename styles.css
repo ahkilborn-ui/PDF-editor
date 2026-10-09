@@ -312,13 +312,13 @@ body:not([data-tool="select"]) .annotLayer {
 }
 body[data-tool="text"] .annotLayer { cursor: text; }
 
-/* Highlight tool: drag across text to highlight exactly those letters (the
-   text layers underneath take the mouse), or drag elsewhere for a box. */
+/* Highlight tool: the editor works out which letters to highlight itself
+   (app.js, "text-aware highlighter"), so the browser's own text selection is
+   switched off, and the cursor (text or crosshair) is set from the script. */
 body[data-tool="highlight"] .annotLayer { pointer-events: none; }
 body[data-tool="highlight"] .page { cursor: crosshair; }
-body[data-tool="highlight"] :is(.textLayer, .ocrLayer) span { cursor: text; }
-body[data-tool="highlight"] .textLayer ::selection,
-body[data-tool="highlight"] .ocrLayer span::selection { background: var(--hl-preview, rgba(255, 235, 59, .5)); }
+body[data-tool="highlight"] :is(.textLayer, .ocrLayer),
+body[data-tool="highlight"] :is(.textLayer, .ocrLayer) span { user-select: none; cursor: inherit; }
 body[data-tool="highlight"] .annotLayer,
 body[data-tool="whiteout"] .annotLayer,
 body[data-tool="rect"] .annotLayer,
