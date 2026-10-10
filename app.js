@@ -73,6 +73,7 @@
     undo: [],
     redo: [],
     dirty: false,
+    changes: 0,            // counts every change, so a save knows if more came in while it ran
     busy: false,
     nextId: 1,
     nextPageId: 1,
@@ -185,11 +186,17 @@
     return JSON.stringify({ annots: state.annots, ocr: state.ocr, order: state.order, rotation: state.rotation });
   }
 
+  // Something in the document changed and isn't saved yet.
+  function markChanged() {
+    state.changes++;
+    state.dirty = true;
+  }
+
   function checkpoint() {
     state.undo.push(snapshot());
     if (state.undo.length > 200) state.undo.shift();
     state.redo = [];
-    state.dirty = true;
+    markChanged();
     updateButtons();
   }
 
@@ -209,7 +216,7 @@
       drawAnnots(p);
       drawOcrLayer(p);
     });
-    state.dirty = true;
+    markChanged();
     updateButtons();
   }
 
@@ -294,9 +301,9 @@
     if (append && added) {
       state.undo.push(before);
       state.redo = [];
-      state.dirty = true;
+      markChanged();
     } else if (files.length > 1) {
-      state.dirty = true;
+      markChanged();
     }
     // Opened a PDF we can write back to: Save updates that file.
     const first = usable[0];
@@ -1546,6 +1553,7 @@
     if (!items.length) return;
     color = color.toLowerCase();
     if (commit) checkpoint();
+    else markChanged();
     for (const a of items) {
       a.color = color;
       refreshAnnot(a);
@@ -1792,6 +1800,14 @@
       a.text = el.innerText.replace(/\n$/, '');
       scheduleThumbOverlay(a.page); // the page viewer shows the text as it's typed
       updateSelectionUi();
+      // Unsaved right away (not only once the box is left), so closing the
+      // tab warns, and a save that's running knows it missed this.
+      if (!state.dirty) {
+        markChanged();
+        updateButtons();
+      } else {
+        state.changes++;
+      }
     });
     el.addEventListener('paste', (e) => {
       e.preventDefault();
@@ -2347,6 +2363,7 @@
     const items = selectedItems();
     if (items.length) {
       if (commit) checkpoint();
+      else markChanged();
       for (const a of items) {
         a.color = color;
         refreshAnnot(a);
@@ -2445,7 +2462,7 @@
       }
       state.undo.push(before);
       state.redo = [];
-      state.dirty = true;
+      markChanged();
       const total = targets.reduce((n, p) => n + (state.ocr[p.id]?.length || 0), 0);
       setStatus(`OCR finished: found ${total} words on ${targets.length} page${targets.length === 1 ? '' : 's'}. ` +
         'Click Save (Ctrl+S) to keep the searchable PDF.');
@@ -2453,7 +2470,7 @@
       console.error(err);
       if (done) {
         state.undo.push(before);
-        state.dirty = true;
+        markChanged();
       }
       setStatus(`OCR failed: ${err.message || err}`);
     } finally {
@@ -2789,6 +2806,7 @@
         throw new Error('the PDF tools could not be loaded. Check your internet connection and save again (keep this page open so your changes are not lost). The installable offline app avoids this.');
       }
       for (const src of state.sources) src.saveNote = null;
+      const changesSaved = state.changes; // anything changed after this point isn't in this save
       try {
         bytes = await buildPdf();
       } catch (err) {
@@ -2829,7 +2847,9 @@
         download(bytes, name);
         note += ' It is in your Downloads folder.';
       }
-      state.dirty = false;
+      // Changes made while saving weren't in this copy: they stay unsaved.
+      state.dirty = state.changes !== changesSaved;
+      if (state.dirty) note += ' Changes you made while it was saving aren\'t in it yet: press Ctrl+S again.';
       setStatus(`${handle && !savedToDownloadsInstead ? 'Saved changes to' : 'Saved'} ${name}.${note}`);
     } catch (err) {
       console.error(err);
