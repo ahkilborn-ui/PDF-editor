@@ -44,7 +44,7 @@
     text: '#000000',
     highlight: '#ffeb3b',
     whiteout: '#ffffff',
-    rect: '#1e88e5',
+    rect: '#e53935',
     draw: '#e53935',
   };
 
