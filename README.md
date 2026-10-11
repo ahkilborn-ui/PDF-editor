@@ -73,6 +73,8 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
    - Highlights, text boxes, rectangles, white-out and drawings are saved as standard PDF annotations, the same kind Acrobat's comment tools make. Every PDF reader shows and prints them, and when you reopen the file they're still editable: move them, change them or delete them, here or in Acrobat.
    - **Save As** (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd>) saves a separate copy. Photos and Word files ask where to save the new PDF.
    - A **\*** after the file name in the tab title means there are unsaved changes.
+   - Keep each file open in just one tab or window. If you open a file that's already open in another PDF Editor tab, a popup says so. If the file was saved from somewhere else since you opened it (another tab, or another program), Save asks before replacing it, so changes made there aren't wiped out: **Replace it**, or **Save a copy instead**.
+   - After every save, the app reads the file back to check it was written completely.
    - Safari and Firefox can't save over a file, so there each save downloads a new copy.
 
 ### Tools and shortcuts

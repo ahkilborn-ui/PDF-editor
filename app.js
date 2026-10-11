@@ -309,6 +309,8 @@
     const first = usable[0];
     if (!append && !merged && first?.handle && kindOf(first.file) === 'pdf' && state.sources[0]?.name === first.file.name) {
       state.saveHandle = first.handle;
+      state.fileStamp = await stampOf(first.file);
+      announceOpenFile(first.handle);
     }
     const n = state.order.length;
     const mergedNote = state.sources.length > 1 ? ` (merged from ${state.sources.length} files)` : '';
@@ -375,6 +377,8 @@
       sources: [], pageById: new Map(), order: [], annots: [], ocr: {}, rotation: {},
       undo: [], redo: [], selectedId: null, editingId: null, dirty: false,
       saveHandle: null,
+      fileStamp: null,     // size / time of the file on disk as last opened or saved here
+      warnedOpenTwice: false,
       textReady: Promise.resolve(),
     });
     updateButtons();
@@ -2781,6 +2785,28 @@
       }
     }
 
+    // The file changed on disk since it was opened or saved here (saved from
+    // another tab or window, or another program)? Writing would replace that
+    // version and whatever was added there, so ask first.
+    if (handle && handle === state.saveHandle && state.fileStamp) {
+      let changed = false;
+      try {
+        changed = await fileChanged(await handle.getFile(), state.fileStamp);
+      } catch {
+        changed = false; // moved or deleted: writing recreates it
+      }
+      if (changed) {
+        const replace = await askConfirm(
+          `"${handle.name}" was changed after you opened it here — probably saved from another PDF Editor tab or window, ` +
+          'or by another program. Saving here replaces that version, and anything added there would be lost.',
+          { title: 'This file changed since you opened it', yes: 'Replace it', no: 'Save a copy instead', danger: true });
+        if (!replace) {
+          save({ saveAs: true });
+          return;
+        }
+      }
+    }
+
     // Busy (opening files, reading a scan, another save…)? Save as soon as it's done.
     if (state.busy) {
       state.savePending = true;
@@ -2831,8 +2857,10 @@
 
       if (handle) {
         try {
-          await writeToFile(handle, bytes);
+          const written = await writeToFile(handle, bytes);
+          if (handle !== state.saveHandle) announceOpenFile(handle);
           state.saveHandle = handle;
+          state.fileStamp = await stampOf(written, bytes);
           name = handle.name;
         } catch (err) {
           // The chosen file can't be written (e.g. it's open in another
@@ -2873,6 +2901,78 @@
     }
   }
 
+  // What the file on disk looked like when opened or last saved here: its
+  // size, time and a fingerprint of its contents.
+  async function stampOf(file, bytes = null) {
+    return { size: file.size, modified: file.lastModified, hash: await fingerprint(bytes || await file.arrayBuffer()) };
+  }
+
+  async function fingerprint(data) {
+    try {
+      return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256', data)), (x) => x.toString(16).padStart(2, '0')).join('');
+    } catch {
+      return null;
+    }
+  }
+
+  // Has something else written the file? Only a different size or different
+  // contents count (sync programs sometimes just touch the time).
+  async function fileChanged(file, stamp) {
+    if (file.size !== stamp.size) return true;
+    if (file.lastModified === stamp.modified) return false;
+    const hash = await fingerprint(await file.arrayBuffer());
+    if (!hash || !stamp.hash) return false;
+    if (hash === stamp.hash) {
+      stamp.modified = file.lastModified;
+      return false;
+    }
+    return true;
+  }
+
+  // Tabs tell each other which file they have open, so having the same file
+  // open twice (where one tab's save would wipe out the other's changes)
+  // gets a warning.
+  const tabs = typeof BroadcastChannel === 'function' ? new BroadcastChannel('pdf-editor-files') : null;
+
+  function announceOpenFile(handle) {
+    try {
+      tabs?.postMessage({ type: 'opened', handle });
+    } catch {
+      // handles can't be passed in this browser: no warning, nothing else lost
+    }
+  }
+
+  function warnOpenTwice() {
+    const name = state.saveHandle?.name || 'This file';
+    setStatus(`⚠ ${name} is also open in another PDF Editor tab or window. Close one of them: saving in one replaces the changes made in the other.`);
+  }
+
+  tabs?.addEventListener('message', async (e) => {
+    const { type, handle } = e.data || {};
+    if (!handle || !state.saveHandle?.isSameEntry) return;
+    let same = false;
+    try {
+      same = await state.saveHandle.isSameEntry(handle);
+    } catch {
+      return;
+    }
+    if (!same) return;
+    if (type === 'opened') {
+      tabs.postMessage({ type: 'already-open', handle });
+      warnOpenTwice();
+    } else if (type === 'already-open' && !state.warnedOpenTwice) {
+      // This tab just opened it: say so plainly, once.
+      state.warnedOpenTwice = true;
+      warnOpenTwice();
+      if (!document.querySelector('dialog[open]')) {
+        askConfirm(`${state.saveHandle.name} is already open in another PDF Editor tab or window. ` +
+          'Keep working in just one of them: saving in one replaces the changes made in the other. ' +
+          'If you save the other one later, PDF Editor will ask first.',
+        { title: 'Already open in another tab', yes: null, no: 'OK', danger: false, warning: true });
+      }
+    }
+  });
+
   // Can we still write to the file chosen earlier? Asks again if the browser
   // has since withdrawn permission (Chrome does this after a while).
   async function hasWritePermission(handle) {
@@ -2899,9 +2999,14 @@
         const writable = await handle.createWritable();
         await writable.write(bytes);
         await writable.close();
+        // Read it back: the file on disk must be exactly what was saved.
         const written = await handle.getFile();
         if (written.size !== bytes.length) throw new Error(`only ${written.size} of ${bytes.length} bytes were written`);
-        return;
+        const back = new Uint8Array(await written.arrayBuffer());
+        for (let i = 0; i < back.length; i++) {
+          if (back[i] !== bytes[i]) throw new Error('the file on disk did not match what was saved');
+        }
+        return written;
       } catch (err) {
         lastError = err;
         if (err.name === 'NotAllowedError') break; // permission withdrawn: retrying won't help
