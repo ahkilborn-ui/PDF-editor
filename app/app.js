@@ -2693,6 +2693,9 @@
       for (let i = out.getPageCount() - 1; i >= 0; i--) {
         if (!keep.has(i)) out.removePage(i);
       }
+      // pdf-lib keeps a list of the pages that removePage doesn't update: with
+      // a stale list, edits went onto the wrong pages (and some were lost).
+      out.pageCache?.invalidate?.();
       toCopy = list.filter((p) => p.src !== 0);
     } else {
       out = await L.PDFDocument.create();
@@ -2722,6 +2725,9 @@
     const clean = makeSanitizer(font);
     const outPages = out.getPages();
 
+    if (outPages.length !== pages().length || new Set(outPages.map((p) => p.ref.toString())).size !== outPages.length) {
+      throw new Error('the pages could not be put in order');
+    }
     pages().forEach((page, i) => {
       const target = outPages[i];
       target.setRotation(L.degrees(page.vp.rotation));
@@ -2744,7 +2750,22 @@
       });
     });
 
-    return out.save();
+    const bytes = await out.save();
+    await checkSavedItems(bytes);
+    return bytes;
+  }
+
+  // Read the new PDF back and check every page carries exactly the edits
+  // shown on it, so a save can never quietly drop or misplace them.
+  async function checkSavedItems(bytes) {
+    const back = await window.PdfEditable.readItems(bytes, { countOnly: true });
+    const expected = pages().map((page) => state.annots.filter((a) => a.page === page.id).length);
+    const got = expected.map(() => 0);
+    for (const { index } of back?.items || []) got[index] = (got[index] || 0) + 1;
+    const wrong = expected.findIndex((n, i) => n !== got[i]);
+    if (wrong >= 0 || got.length !== expected.length) {
+      throw new Error(`the edits on page ${wrong + 1} did not come out right in the saved file (${got[wrong] ?? 0} of ${expected[wrong]})`);
+    }
   }
 
   const canPickSaveFile = typeof window.showSaveFilePicker === 'function';

@@ -151,7 +151,7 @@
    * those annotations (and the search-text streams) removed, or null if the
    * file has none.
    */
-  async function readItems(bytes) {
+  async function readItems(bytes, { countOnly = false } = {}) {
     const L = PDFLib;
     let doc;
     try {
@@ -191,6 +191,7 @@
     });
     if (!changed) return null;
     found.sort((a, b) => a.index - b.index || a.order - b.order);
+    if (countOnly) return { bytes: null, items: found }; // just checking what's there
     return { bytes: await doc.save(), items: found };
   }
 
