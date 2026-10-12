@@ -1158,7 +1158,8 @@
 
   // Ask a yes/no question. Resolves true for Yes, false for No or Esc.
   // Ask a question with two buttons; by default "Are you sure?" with Yes / No.
-  function askConfirm(message, { title = 'Are you sure?', yes = 'Yes', no = 'No', danger = true, warning = false } = {}) {
+  // `escape`: what Esc gives (false, like No, unless the question needs a separate "cancel").
+  function askConfirm(message, { title = 'Are you sure?', yes = 'Yes', no = 'No', danger = true, warning = false, escape = false } = {}) {
     return new Promise((resolve) => {
       confirmUi.dialog.classList.toggle('warning', warning);
       confirmUi.title.textContent = title;
@@ -1177,7 +1178,7 @@
       confirmUi.no.onclick = () => finish(false);
       confirmUi.dialog.oncancel = (e) => {
         e.preventDefault();
-        finish(false);
+        finish(escape);
       };
       confirmUi.dialog.showModal();
       confirmUi.no.focus();
@@ -2765,13 +2766,40 @@
     // before) right away, while the click / key press still counts as the
     // person's action — browsers only allow these in response to one.
     let handle = saveAs ? null : state.saveHandle;
-    if (handle && !(await hasWritePermission(handle))) handle = null;
+    let notSavedInto = null; // the opened file, when the person chose to save a separate copy instead
+    if (handle && !(await hasWritePermission(handle))) {
+      // Chrome asks before letting a site change a file (again after the
+      // browser restarts). Without that OK, don't quietly save a separate
+      // copy: explain, and let the person try again.
+      const answer = await askConfirm(
+        `Chrome didn't let PDF Editor save into "${handle.name}", so nothing has been saved yet. ` +
+        'Click Try again, then choose Allow (or Save changes) when Chrome asks. ' +
+        `"Save a copy" saves a separate file instead and leaves "${handle.name}" as it is.`,
+        { title: 'Allow saving into this file', yes: 'Try again', no: 'Save a copy', danger: false, warning: true, escape: null });
+      if (answer === null) {
+        setStatus('Not saved.');
+        return;
+      }
+      if (!answer || !(await hasWritePermission(handle))) {
+        notSavedInto = handle;
+        handle = null;
+      }
+    }
     if (canPickSaveFile && !handle) {
+      const pickerOptions = {
+        suggestedName: outputName(),
+        types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }],
+      };
+      // Start in the folder of the file that's open.
+      if (state.saveHandle) pickerOptions.startIn = state.saveHandle;
       try {
-        handle = await window.showSaveFilePicker({
-          suggestedName: outputName(),
-          types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }],
-        });
+        try {
+          handle = await window.showSaveFilePicker(pickerOptions);
+        } catch (err) {
+          if (err.name !== 'TypeError' || !pickerOptions.startIn) throw err;
+          delete pickerOptions.startIn; // that folder can't be used: let the browser pick
+          handle = await window.showSaveFilePicker(pickerOptions);
+        }
       } catch (err) {
         if (err.name === 'AbortError') {
           setStatus('Not saved.');
@@ -2824,6 +2852,7 @@
     let name = outputName();
     let failure = null;
     let savedToDownloadsInstead = null;
+    let savedAsCopy = null;
     try {
       // The PDF tools may have failed to load (e.g. the connection dropped): try again.
       try {
@@ -2875,10 +2904,18 @@
         download(bytes, name);
         note += ' It is in your Downloads folder.';
       }
+      if (handle && !savedToDownloadsInstead) {
+        const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        note = ` (${time}).${note}`;
+        if (notSavedInto && !(await sameFile(handle, notSavedInto))) {
+          note += ` "${notSavedInto.name}" was not changed: your edits are in "${handle.name}".`;
+          savedAsCopy = { opened: notSavedInto.name, saved: handle.name };
+        }
+      }
       // Changes made while saving weren't in this copy: they stay unsaved.
       state.dirty = state.changes !== changesSaved;
       if (state.dirty) note += ' Changes you made while it was saving aren\'t in it yet: press Ctrl+S again.';
-      setStatus(`${handle && !savedToDownloadsInstead ? 'Saved changes to' : 'Saved'} ${name}.${note}`);
+      setStatus(`${handle && !savedToDownloadsInstead ? 'Saved changes to' : 'Saved'} ${name}${note.startsWith(' (') ? '' : '.'}${note}`);
     } catch (err) {
       console.error(err);
       failure = err;
@@ -2888,7 +2925,11 @@
       updateButtons();
     }
 
-    if (savedToDownloadsInstead) {
+    if (savedAsCopy) {
+      await askConfirm(`Your edits were saved in a separate file, "${savedAsCopy.saved}". ` +
+        `"${savedAsCopy.opened}" was not changed. From now on, Ctrl+S saves to "${savedAsCopy.saved}".`,
+      { title: 'Saved as a separate copy', yes: null, no: 'OK', danger: false });
+    } else if (savedToDownloadsInstead) {
       await askConfirm(
         `"${savedToDownloadsInstead.file}" couldn't be updated, so your work was saved as "${name}" in your Downloads folder instead. ` +
         `This usually means the file is open in another program, like Acrobat. Close it there and press Ctrl+S to save to "${savedToDownloadsInstead.file}" again. ` +
@@ -2898,6 +2939,14 @@
       if (await notSaved(`Your changes have not been saved. ${capitalize(failure.message || String(failure))}`, { retry: 'Try again' })) {
         save({ saveAs });
       }
+    }
+  }
+
+  async function sameFile(a, b) {
+    try {
+      return await a.isSameEntry(b);
+    } catch {
+      return a.name === b.name;
     }
   }
 
