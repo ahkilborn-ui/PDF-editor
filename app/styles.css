@@ -73,8 +73,9 @@ body {
 .btn.active { background: #dbe7ff; border-color: var(--primary); color: #123a9c; }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .btn.primary:hover:not(:disabled) { background: #1d4fd0; }
-.btn.accent { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.accent:hover:not(:disabled) { background: #0b5f58; }
+/* Make searchable (OCR): tan, with dark text for contrast. */
+.btn.accent { background: #d2b48c; border-color: #b89a6f; color: #2b2418; }
+.btn.accent:hover:not(:disabled) { background: #c4a275; }
 
 .field {
   display: inline-flex;
