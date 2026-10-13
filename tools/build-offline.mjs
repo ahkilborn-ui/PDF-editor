@@ -141,7 +141,7 @@ html = html.replace(/\s*<([a-z]+)[^>]*\bdata-browser-only\b[^>]*>[\s\S]*?<\/\1>/
 html = html.replace(TITLE, [
   TITLE,
   '  <link rel="manifest" href="manifest.webmanifest">',
-  '  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">',
+  '  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2">',
   '  <script>window.PDF_EDITOR_LIB_BASE = \'vendor/\';</script>',
   // Catch the browser's install offer even if it comes before install.js runs.
   '  <script>addEventListener(\'beforeinstallprompt\', (e) => { e.preventDefault(); window.__installPrompt = e; });</script>',
