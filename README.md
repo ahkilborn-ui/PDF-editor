@@ -193,6 +193,7 @@ In the browser version, the first run downloads the English language data (about
 - Bookmarks and fillable form fields are kept when you only delete pages or add files to the end. If you reorder the original pages, or put another file's pages before them, the saved PDF is rebuilt from its pages and those are lost.
 - Typed text uses Helvetica, which only covers Latin characters. Other characters are saved as `?`.
 - OCR is English only.
+- Autosave recovery only lives in the browser where you were working: it isn't available on another computer or in a different browser, it doesn't work in private/incognito windows once they're closed, and clearing your browsing data deletes it. It's a safety net, not a replacement for pressing Save.
 - Converted Word pages are stored as high-resolution pictures with the real text invisibly on top. That makes them look right and searchable, but the text isn't perfectly sharp when you zoom far in. Fonts that aren't on your computer, such as Calibri on a Mac, are replaced with similar ones, so line breaks can differ slightly from Word. For an exact copy, use **File → Save as PDF** in Word, or **File → Download → PDF** in Google Docs.
 
 
