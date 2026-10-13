@@ -74,8 +74,8 @@ body {
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .btn.primary:hover:not(:disabled) { background: #1d4fd0; }
 /* Make searchable (OCR): brass gold, with dark text for contrast. */
-.btn.accent { background: #c9a347; border-color: #a8873a; color: #2b2418; }
-.btn.accent:hover:not(:disabled) { background: #b8923a; }
+.btn.accent { background: #d6a82a; border-color: #b38a1f; color: #2b2418; }
+.btn.accent:hover:not(:disabled) { background: #c49820; }
 
 .field {
   display: inline-flex;
