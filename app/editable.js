@@ -190,9 +190,108 @@
       }
     });
     if (!changed) return null;
+    // A file this editor saved: take off what earlier saves added around the
+    // page contents, so it doesn't pile up with every save (see unwrapSaves).
+    unwrapSaves(doc);
+    dropUnused(doc);
     found.sort((a, b) => a.index - b.index || a.order - b.order);
     if (countOnly) return { bytes: null, items: found }; // just checking what's there
     return { bytes: await doc.save(), items: found };
+  }
+
+  /**
+   * Drop objects nothing in the document refers to any more. pdf-lib keeps
+   * everything it ever loaded or replaced (earlier saves' annotations,
+   * removed pages…) and writes it all out, so without this every save
+   * carried the previous saves' leftovers and files kept growing.
+   */
+  function dropUnused(doc) {
+    const L = PDFLib;
+    const ctx = doc.context;
+    const seen = new Set();
+    const stack = [];
+    const visit = (obj) => {
+      if (obj instanceof L.PDFRef) {
+        const key = obj.toString();
+        if (seen.has(key)) return;
+        seen.add(key);
+        const target = ctx.lookup(obj);
+        if (target) stack.push(target);
+      } else if (obj) {
+        stack.push(obj);
+      }
+    };
+    const t = ctx.trailerInfo;
+    for (const root of [t.Root, t.Info, t.Encrypt, t.ID]) visit(root);
+    while (stack.length) {
+      const obj = stack.pop();
+      if (obj instanceof L.PDFDict) {
+        for (const [, v] of obj.entries()) visit(v);
+      } else if (obj instanceof L.PDFArray) {
+        for (const v of obj.asArray()) visit(v);
+      } else if (obj && obj.dict instanceof L.PDFDict) {
+        visit(obj.dict); // a stream
+      }
+    }
+    for (const [ref] of ctx.enumerateIndirectObjects()) {
+      if (!seen.has(ref.toString())) ctx.delete(ref);
+    }
+  }
+
+  /**
+   * Each save wraps a page's contents in "save state … restore state"
+   * (q … Q, so the edits drawn after it start from a clean state) and gives
+   * the invisible search text its own font entry. Reopening used to keep
+   * those, so every save added another layer: after a couple of dozen saves
+   * the nesting passed what Acrobat allows, and the file kept growing.
+   * Remove the wrapper streams (a run of bare "q" / "q 1 0 0 1 0 0 cm" at the
+   * start, matched by bare "Q" at the end; the next save adds one fresh
+   * layer) and the search-text font entries nothing uses any more.
+   */
+  function unwrapSaves(doc) {
+    const L = PDFLib;
+    const textOf = (ref) => {
+      try {
+        const stream = doc.context.lookup(ref);
+        const data = stream instanceof L.PDFRawStream ? L.decodePDFRawStream(stream).decode() : stream.getContents();
+        let out = '';
+        for (let i = 0; i < data.length; i += 8192) out += String.fromCharCode(...data.subarray(i, i + 8192));
+        return out;
+      } catch {
+        return null;
+      }
+    };
+    let allText = '';
+    for (const page of doc.getPages()) {
+      const contents = page.node.Contents();
+      if (!(contents instanceof L.PDFArray)) continue;
+      const n = contents.size();
+      const trimmed = (i) => textOf(contents.get(i))?.trim();
+      let lead = 0;
+      while (lead < n && /^q(\s+1 0 0 1 0 0 cm)?$/.test(trimmed(lead) ?? '')) lead++;
+      let tail = n;
+      let closes = 0;
+      while (tail > lead && closes < lead) {
+        const t = trimmed(tail - 1);
+        if (t === 'Q') closes++;
+        else if (t !== '') break;
+        tail--;
+      }
+      if (lead && closes === lead) {
+        for (let i = n - 1; i >= tail; i--) contents.remove(i);
+        for (let i = lead - 1; i >= 0; i--) contents.remove(i);
+      }
+      for (let i = 0; i < contents.size(); i++) allText += `${textOf(contents.get(i)) ?? ''}\n`;
+    }
+    // Font entries named like pdf-lib's ("Helvetica-123456") that no page uses.
+    for (const page of doc.getPages()) {
+      const fonts = page.node.Resources()?.lookup(L.PDFName.of('Font'));
+      if (!(fonts instanceof L.PDFDict)) continue;
+      for (const key of fonts.keys()) {
+        const name = key.decodeText();
+        if (/^Helvetica-\d+$/.test(name) && !new RegExp(`/${name}(?![\\w-])`).test(allText)) fonts.delete(key);
+      }
+    }
   }
 
   /**
@@ -232,5 +331,5 @@
     return out;
   }
 
-  window.PdfEditable = { writeItems, readItems, wrapText };
+  window.PdfEditable = { writeItems, readItems, wrapText, dropUnused };
 })();

@@ -2750,6 +2750,7 @@
       });
     });
 
+    window.PdfEditable.dropUnused(out); // leftovers from removed pages and earlier saves
     const bytes = await out.save();
     await checkSavedItems(bytes);
     return bytes;
