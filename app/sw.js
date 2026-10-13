@@ -5,7 +5,7 @@
 // app opens and works with no internet connection. A new build has a new
 // VERSION, which makes the browser fetch the new files and drop the old ones.
 
-const VERSION = 'b4243134bcb9';
+const VERSION = '61082345d331';
 const FILES = [
   "./",
   "LICENSE.txt",
@@ -13,6 +13,14 @@ const FILES = [
   "app.js",
   "convert.js",
   "editable.js",
+  "fonts/jost-latin-400-normal.woff2",
+  "fonts/jost-latin-500-normal.woff2",
+  "fonts/jost-latin-600-normal.woff2",
+  "fonts/jost-latin-700-normal.woff2",
+  "fonts/jost-latin-ext-400-normal.woff2",
+  "fonts/jost-latin-ext-500-normal.woff2",
+  "fonts/jost-latin-ext-600-normal.woff2",
+  "fonts/jost-latin-ext-700-normal.woff2",
   "icons/apple-touch-icon.png",
   "icons/favicon-32.png",
   "icons/icon-192.png",

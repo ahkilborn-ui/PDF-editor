@@ -40,6 +40,8 @@ const COMPONENTS = [
     copyright: 'Copyright (C) 2009-2021 D. R. Commander. Copyright (C) 2015 Viktor Szathmáry. ' +
       'This software is based in part on the work of the Independent JPEG Group (Copyright (C) 1991-2020, Thomas G. Lane, Guido Vollbeding).',
     license: 'IJG, BSD-3-Clause and Zlib', text: ['licenses/IJG.txt', 'licenses/BSD-3-Clause.txt', 'licenses/Zlib.txt'] },
+  { name: 'Jost (typeface)', pkg: '@fontsource/jost', use: 'the font used throughout the app', url: 'https://github.com/indestructible-type/Jost',
+    copyright: 'Copyright 2020 The Jost Project Authors', license: 'SIL Open Font License 1.1', text: '@fontsource/jost/LICENSE' },
   { name: 'zlib (inside qpdf-wasm)', url: 'https://zlib.net',
     copyright: 'Copyright (C) Jean-loup Gailly and Mark Adler', license: 'Zlib', text: 'licenses/Zlib.txt' },
 ];

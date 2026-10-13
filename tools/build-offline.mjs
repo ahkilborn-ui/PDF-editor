@@ -108,6 +108,15 @@ for (const f of SHARED) copy(path.join(ROOT, f), path.join(OUT, f));
 for (const f of fs.readdirSync(path.join(ROOT, 'icons'))) copy(path.join(ROOT, 'icons', f), path.join(OUT, 'icons', f));
 copy(path.join(ROOT, 'offline', 'install.js'), path.join(OUT, 'install.js'));
 copy(path.join(ROOT, 'offline', 'manifest.webmanifest'), path.join(OUT, 'manifest.webmanifest'));
+// The Jost font (the app's typeface), from its npm package, for both versions.
+const FONT_FILES = ['latin', 'latin-ext'].flatMap((set) => [400, 500, 600, 700].map((w) => `jost-${set}-${w}-normal.woff2`));
+for (const f of FONT_FILES) {
+  const src = path.join(NM, '@fontsource', 'jost', 'files', f);
+  if (!fs.existsSync(src)) fail(`missing ${src}. Run "npm install".`);
+  copy(src, path.join(ROOT, 'fonts', f));
+  copy(src, path.join(OUT, 'fonts', f));
+}
+
 // Licenses: PDF Editor's own, and those of the libraries it ships.
 writeNotices(ROOT, path.join(ROOT, 'THIRD-PARTY-NOTICES.txt'));
 copy(path.join(ROOT, 'THIRD-PARTY-NOTICES.txt'), path.join(OUT, 'THIRD-PARTY-NOTICES.txt'));
