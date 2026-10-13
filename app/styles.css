@@ -15,8 +15,8 @@
   --gold: #d6a82a;        /* buttons */
   --gold-hover: #c49820;
   --gold-dark: #b38a1f;
-  --bar: #3d4840;         /* top bar: Sherwin-Williams Ripe Olive */
-  --bar-dark: #2c3530;
+  --bar: #32472f;         /* top bar: deep forest green */
+  --bar-dark: #24331f;
 }
 
 * { box-sizing: border-box; }
