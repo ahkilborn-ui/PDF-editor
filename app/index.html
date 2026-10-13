@@ -9,12 +9,12 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <script>window.PDF_EDITOR_LIB_BASE = 'vendor/';</script>
   <link rel="icon" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="styles.css?v=3aeeb56d52">
+  <link rel="stylesheet" href="styles.css?v=d73368873f">
   <script src="vendor/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="vendor/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
-  <script src="convert.js?v=3aeeb56d52" defer></script>
-  <script src="editable.js?v=3aeeb56d52" defer></script>
-  <script src="app.js?v=3aeeb56d52" defer></script>
+  <script src="convert.js?v=d73368873f" defer></script>
+  <script src="editable.js?v=d73368873f" defer></script>
+  <script src="app.js?v=d73368873f" defer></script>
   <script src="install.js" defer></script>
 </head>
 <body data-tool="select">
@@ -107,6 +107,11 @@
           <strong>Merge files</strong>
           <span>Combine several PDFs, photos or Word files into one, in the order you choose.</span>
         </button>
+      </div>
+      <div id="start-save-note" class="start-note" role="note" hidden>
+        <strong>Saving in this browser:</strong> each save downloads a new copy of the PDF (usually to your Downloads folder) instead of updating the file you opened. Your edits are all in that copy.
+        To save straight into your files, use <strong>Chrome</strong> or <strong>Edge</strong>.
+        <span id="start-save-firefox" hidden>Or, in Firefox's Settings, turn on <em>Always ask you where to save files</em>, then pick the original file when you save to replace it.</span>
       </div>
       <details class="start-tips">
         <summary>What can it do?</summary>

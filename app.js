@@ -2770,6 +2770,13 @@
 
   const canPickSaveFile = typeof window.showSaveFilePicker === 'function';
 
+  // Firefox and Safari (and Brave, by default) can't let a page save into a
+  // file on disk: every save downloads a copy. Say so on the start screen.
+  if (!canPickSaveFile) {
+    $('#start-save-note').hidden = false;
+    $('#start-save-firefox').hidden = !/Firefox\//.test(navigator.userAgent);
+  }
+
   // Save the document. In Chrome and Edge the first save asks where to put
   // the file, and later saves (Ctrl+S) update that same file; Save As
   // (Ctrl+Shift+S) asks again. Other browsers download a copy each time.

@@ -132,6 +132,10 @@ Saving fixes most problems by itself:
 
 You'll still see a red **Not saved** popup if you close the save window without choosing a place (click **Choose where to save**), or if something goes wrong that the app can't fix (click **Try again**). Closing the tab with unsaved changes asks you to confirm first.
 
+### Firefox and Safari
+
+Everything works in Firefox and Safari except saving straight into the file you opened: those browsers don't let websites change files on your computer, so each save downloads a new copy (usually to Downloads) with all your edits. The start screen says so in those browsers. For saving into the same file, use Chrome or Edge. In Firefox you can also turn on **Settings → Always ask you where to save files** and pick the original file when saving.
+
 ### Merging, deleting and reordering pages
 
 - **Merge**: click **Merge files** on the start screen, or **Add files** in the toolbar to merge more files into the open document. The merge window opens:
