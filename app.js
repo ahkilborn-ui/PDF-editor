@@ -3350,7 +3350,7 @@
   }
 
   function mergeIcon(kind) {
-    const color = kind === 'docx' ? '#2563eb' : kind === 'image' ? '#0f766e' : '#b91c1c';
+    const color = kind === 'docx' ? '#32472f' : kind === 'image' ? '#b8860b' : '#b91c1c';
     const label = kind === 'docx' ? 'W' : kind === 'image' ? 'IMG' : 'PDF';
     return `<svg viewBox="0 0 40 48" aria-hidden="true"><path d="M4 2h22l10 10v34H4z" fill="#fff" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>` +
       `<text x="20" y="34" text-anchor="middle" font-size="${label.length > 1 ? 10 : 16}" font-family="sans-serif" font-weight="700" fill="${color}">${label}</text></svg>`;
