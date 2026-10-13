@@ -5,9 +5,11 @@
 // app opens and works with no internet connection. A new build has a new
 // VERSION, which makes the browser fetch the new files and drop the old ones.
 
-const VERSION = 'e1932e680500';
+const VERSION = '2c8ff0848a8e';
 const FILES = [
   "./",
+  "LICENSE.txt",
+  "THIRD-PARTY-NOTICES.txt",
   "app.js",
   "convert.js",
   "editable.js",

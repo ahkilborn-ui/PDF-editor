@@ -14,6 +14,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { writeNotices } from './notices.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 const OUT = path.join(ROOT, 'app');
@@ -107,6 +108,10 @@ for (const f of SHARED) copy(path.join(ROOT, f), path.join(OUT, f));
 for (const f of fs.readdirSync(path.join(ROOT, 'icons'))) copy(path.join(ROOT, 'icons', f), path.join(OUT, 'icons', f));
 copy(path.join(ROOT, 'offline', 'install.js'), path.join(OUT, 'install.js'));
 copy(path.join(ROOT, 'offline', 'manifest.webmanifest'), path.join(OUT, 'manifest.webmanifest'));
+// Licenses: PDF Editor's own, and those of the libraries it ships.
+writeNotices(ROOT, path.join(ROOT, 'THIRD-PARTY-NOTICES.txt'));
+copy(path.join(ROOT, 'THIRD-PARTY-NOTICES.txt'), path.join(OUT, 'THIRD-PARTY-NOTICES.txt'));
+copy(path.join(ROOT, 'LICENSE'), path.join(OUT, 'LICENSE.txt'));
 
 // 5a. Stamp the browser version's index.html with a version for its own
 //     files ("styles.css?v=…"), so after an update a browser can't pair the

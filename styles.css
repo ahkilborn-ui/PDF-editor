@@ -213,6 +213,7 @@ body.has-doc .drop-hint { display: none; }
   text-align: left;
 }
 .start-note[hidden] { display: none; }
+.drop-hint .start-legal { margin: 8px 0 0; font-size: 12px; }
 .start-tips { text-align: left; font-size: 14px; }
 .start-tips summary { cursor: pointer; color: var(--primary); text-align: center; }
 #viewer.dragover .drop-hint,

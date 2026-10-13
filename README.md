@@ -15,6 +15,14 @@ It can:
 - **Page viewer**: a panel showing every page, where you can tick pages to delete or rotate, delete a range (for example pages 3 to 7), rotate pages, or drag them into a new order.
 - **Make searchable (OCR)**: reads the words on scanned pages so <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>⌘</kbd>+<kbd>F</kbd> on Mac) can find them, both in the editor and in the saved file in any PDF reader.
 
+**Free to use, no account.** Open https://ahkilborn-ui.github.io/PDF-editor/ and start. It works best in **Chrome or Edge** on Windows or Mac; in Firefox and Safari everything works, but each save downloads a new copy instead of updating the file you opened ([why](#firefox-and-safari)).
+
+**Private.** PDF Editor runs entirely inside your browser. Your files are never uploaded: there's no server, no account and no tracking. (The browser version downloads its PDF and OCR tools from the jsDelivr CDN, but your documents stay on your computer.)
+
+**Keep a backup of important files.** This is a young project. It checks every save (it reads the file back and confirms each page has its edits), but keep a copy of anything you can't afford to lose.
+
+**Found a problem?** Report it at https://github.com/ahkilborn-ui/PDF-editor/issues, with your browser and what you did just before it happened.
+
 ## Two versions
 
 | | Browser version | Installable offline app |
@@ -216,3 +224,9 @@ npm run build
 ```
 
 Commit the updated `app/` folder along with your change. The build gives the app a new version number whenever any file changes, and installed copies use that to pick up the update.
+
+## License
+
+PDF Editor is free and open source under the [MIT License](LICENSE): you may use, copy, change and share it, and it comes with no warranty.
+
+It's built on other open-source libraries (PDF.js, pdf-lib, Tesseract.js, heic-to, JSZip, docx-preview, html2canvas and QPDF). Their copyright notices and licenses are in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt), which `npm run build` keeps up to date; the app links to it from the start screen (**Licenses**). heic-to (iPhone photo support) is LGPL-3.0: it's used unmodified as a separate file, and its source code is at https://github.com/hoppergee/heic-to.
