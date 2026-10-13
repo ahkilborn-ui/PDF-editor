@@ -71,20 +71,23 @@ body {
   cursor: pointer;
 }
 .toolbar .field select:hover { background: var(--gold-hover); }
-/* Custom color: just the color, with a thin outline like the color squares. */
+/* Custom color: just the color, with a thin outline like the color squares.
+   The outline is on the box itself and the color is clipped to its rounded
+   corners, so the corners stay clean. */
 .toolbar .field input[type="color"] {
   width: 28px;
-  height: 24px;
+  height: 22px;
   padding: 0;
-  border: 0;
+  border: 1px solid rgba(255, 255, 255, .85);
+  border-radius: 4px;
+  overflow: hidden;
   background: none;
   cursor: pointer;
 }
+.toolbar .field input[type="color"]:hover { border-color: var(--gold); }
 .toolbar .field input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
-.toolbar .field input[type="color"]::-webkit-color-swatch { border: 1.5px solid rgba(255, 255, 255, .85); border-radius: 4px; }
-.toolbar .field input[type="color"]::-moz-color-swatch { border: 1.5px solid rgba(255, 255, 255, .85); border-radius: 4px; }
-.toolbar .field input[type="color"]:hover::-webkit-color-swatch { border-color: var(--gold); }
-.toolbar .field input[type="color"]:hover::-moz-color-swatch { border-color: var(--gold); }
+.toolbar .field input[type="color"]::-webkit-color-swatch { border: 0; border-radius: 0; }
+.toolbar .field input[type="color"]::-moz-color-swatch { border: 0; border-radius: 0; }
 .toolbar .field input[type="checkbox"] {
   appearance: none;
   display: inline-grid;
