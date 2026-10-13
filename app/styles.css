@@ -53,6 +53,37 @@ body {
 /* Labels on the dark green bar: light, to read easily. */
 .toolbar .field, .toolbar .zoom-label { color: #eef1ea; }
 .toolbar .swatch { border-color: rgba(255, 255, 255, .5); }
+/* Text size / Line drop-downs and the Fill check box in gold, like the buttons. */
+.toolbar .field select {
+  border-color: var(--gold-dark);
+  background: var(--gold);
+  color: #2b2418;
+  cursor: pointer;
+}
+.toolbar .field select:hover { background: var(--gold-hover); }
+.toolbar .field input[type="checkbox"] {
+  appearance: none;
+  display: inline-grid;
+  place-content: center;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  border: 2px solid var(--gold);
+  border-radius: 4px;
+  background: transparent;
+  cursor: pointer;
+}
+.toolbar .field input[type="checkbox"]:checked { background: var(--gold); }
+.toolbar .field input[type="checkbox"]:checked::after {
+  content: "";
+  width: 4px;
+  height: 9px;
+  margin-top: -2px;
+  border: solid #2b2418;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.toolbar .field input[type="checkbox"]:focus-visible { outline: 2px solid #eef1ea; outline-offset: 2px; }
 
 .group {
   display: flex;
@@ -178,12 +209,13 @@ body {
   background: var(--cream);
   box-shadow: 0 10px 34px rgba(0, 0, 0, .4);
 }
-/* Letterhead-style title: serif, forest green, a short gold rule under it. */
+/* Title: forest green (same font as the rest of the app), a short gold rule under it. */
 .drop-hint h1 {
   margin: 0 0 10px;
   color: var(--primary);
-  font: 600 32px/1.15 Georgia, "Times New Roman", serif;
-  letter-spacing: .3px;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.15;
 }
 .drop-hint h1::after {
   content: "";
@@ -816,9 +848,9 @@ body .annot.txt.editing { pointer-events: auto; cursor: text; }
   gap: 12px;
   align-items: center;
   padding: 4px 12px;
-  border-top: 1px solid #c9a347;
-  background: var(--cream);
-  color: var(--warm-muted);
+  border-top: 1px solid var(--bar-dark);
+  background: var(--bar);
+  color: #eef1ea;
   font-size: 13px;
   min-height: 28px;
 }
