@@ -12,8 +12,8 @@
   --viewer: #525659;
   --select: #2563eb;
   --panel-width: 260px;
-  --sage: #879c72;        /* top bar */
-  --sage-dark: #6f835c;
+  --bar: #3d4840;         /* top bar: Sherwin-Williams Ripe Olive */
+  --bar-dark: #2c3530;
 }
 
 * { box-sizing: border-box; }
@@ -41,11 +41,12 @@ body {
   align-items: center;
   /* Room on the right for the Page viewer button. */
   padding: 8px calc(var(--panel-width) / 2 + 72px) 8px 12px;
-  background: var(--sage);
-  border-bottom: 1px solid var(--sage-dark);
+  background: var(--bar);
+  border-bottom: 1px solid var(--bar-dark);
 }
-/* Labels on the sage bar: dark enough to read easily. */
-.toolbar .field, .toolbar .zoom-label { color: #1f2b18; }
+/* Labels on the dark green bar: light, to read easily. */
+.toolbar .field, .toolbar .zoom-label { color: #eef1ea; }
+.toolbar .swatch { border-color: rgba(255, 255, 255, .5); }
 
 .group {
   display: flex;
