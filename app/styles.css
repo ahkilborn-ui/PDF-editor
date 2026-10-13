@@ -104,7 +104,7 @@ body {
 }
 
 /* Buttons are gold, with dark text for contrast. The selected tool is a
-   darker bronze; delete buttons stay white with red text so they stand out. */
+   deeper gold, pressed in; delete buttons have dark red text. */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -181,8 +181,8 @@ body {
 .custom-color { margin-left: 4px; }
 
 .btn.small { height: 24px; padding: 0 8px; font-size: 12px; }
-.btn.danger { background: #fff; color: #b42318; border-color: #f1b5af; }
-.btn.danger:hover:not(:disabled) { background: #fdecea; }
+.btn.danger { color: #7a1610; }
+.btn.danger:hover:not(:disabled) { background: var(--gold-hover); }
 
 /* ---------- Viewer ---------- */
 
@@ -747,16 +747,16 @@ body .annot.txt.editing { pointer-events: auto; cursor: text; }
   width: 28px;
   height: 26px;
   padding: 0;
-  border: 1px solid rgba(0, 0, 0, .15);
+  border: 1px solid var(--gold-dark);
   border-radius: 5px;
-  background: rgba(255, 255, 255, .92);
+  background: var(--gold);
   box-shadow: 0 1px 3px rgba(0, 0, 0, .3);
-  color: var(--text);
+  color: #2b2418;
   font-size: 16px;
   line-height: 1;
   cursor: pointer;
 }
-.thumb-rotate button:hover { background: #f3e6bf; }
+.thumb-rotate button:hover { background: var(--gold-hover); }
 .panel-selection .rotate-btn { flex: none; width: 36px; padding: 0; font-size: 18px; }
 
 /* ---------- Dialogs ---------- */
