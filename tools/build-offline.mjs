@@ -133,6 +133,8 @@ html = html.replace('<title>PDF Editor</title>', [
   '  <link rel="manifest" href="manifest.webmanifest">',
   '  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">',
   '  <script>window.PDF_EDITOR_LIB_BASE = \'vendor/\';</script>',
+  // Catch the browser's install offer even if it comes before install.js runs.
+  '  <script>addEventListener(\'beforeinstallprompt\', (e) => { e.preventDefault(); window.__installPrompt = e; });</script>',
 ].join('\n'));
 html = html.replace(/(<script src="app\.js[^"]*" defer><\/script>)/, '$1\n  <script src="install.js" defer></script>');
 if (!html.includes('install.js')) fail('could not add install.js to app/index.html');

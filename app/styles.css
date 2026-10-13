@@ -1,3 +1,6 @@
+/* Anything marked hidden stays hidden, whatever its other styles (.btn sets display). */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #f4f5f7;
   --panel: #ffffff;

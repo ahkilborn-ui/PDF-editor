@@ -3957,8 +3957,21 @@
     });
   }
 
+  // "Install app": the installable version lives in app/ (built with its
+  // own copies of the libraries). In the browser version the button opens it
+  // in a new tab, where the browser offers to install it. (app/install.js
+  // handles the button in the installable version.)
+  if (!window.PDF_EDITOR_LIB_BASE) {
+    const installBtn = $('#install-btn');
+    installBtn.hidden = false;
+    installBtn.title = 'Get PDF Editor as an app that works offline (opens in a new tab)';
+    installBtn.addEventListener('click', () => window.open('app/', '_blank', 'noopener'));
+  }
+
   // Exposed for automated tests / debugging in the console.
-  window.pdfEditor = { state, panel, textIndex, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel, openMergeDialog, closeDocument, merge };
+  window.pdfEditor = {
+    notice: (title, message) => askConfirm(message, { title, yes: null, no: 'OK', danger: false }),
+    state, panel, textIndex, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel, openMergeDialog, closeDocument, merge };
 
   showColor(state.colors[state.tool]);
   updateHighlightPreview();
