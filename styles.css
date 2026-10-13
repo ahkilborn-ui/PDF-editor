@@ -61,6 +61,8 @@ body {
   cursor: pointer;
 }
 .toolbar .field select:hover { background: var(--gold-hover); }
+.toolbar .field input[type="color"] { border-color: var(--gold-dark); background: var(--gold); cursor: pointer; }
+.toolbar .field input[type="color"]:hover { background: var(--gold-hover); }
 .toolbar .field input[type="checkbox"] {
   appearance: none;
   display: inline-grid;
