@@ -12,6 +12,9 @@
   --viewer: #525659;
   --select: #2563eb;
   --panel-width: 260px;
+  --gold: #d6a82a;        /* buttons */
+  --gold-hover: #c49820;
+  --gold-dark: #b38a1f;
   --bar: #3d4840;         /* top bar: Sherwin-Williams Ripe Olive */
   --bar-dark: #2c3530;
 }
@@ -54,28 +57,26 @@ body {
   align-items: center;
 }
 
+/* Buttons are gold, with dark text for contrast. The selected tool is a
+   darker bronze; delete buttons stay white with red text so they stand out. */
 .btn {
   display: inline-flex;
   align-items: center;
   height: 32px;
   padding: 0 12px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--gold-dark);
   border-radius: 6px;
-  background: var(--panel);
-  color: var(--text);
+  background: var(--gold);
+  color: #2b2418;
   font: inherit;
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
 }
-.btn:hover:not(:disabled) { background: #eef1f5; }
+.btn:hover:not(:disabled) { background: var(--gold-hover); }
 .btn:disabled { opacity: .45; cursor: default; }
-.btn.active { background: #dbe7ff; border-color: var(--primary); color: #123a9c; }
-.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
-.btn.primary:hover:not(:disabled) { background: #1d4fd0; }
-/* Make searchable (OCR): brass gold, with dark text for contrast. */
-.btn.accent { background: #d6a82a; border-color: #b38a1f; color: #2b2418; }
-.btn.accent:hover:not(:disabled) { background: #c49820; }
+.btn.active { background: #8a6510; border-color: #6e500c; color: #fff; }
+.btn.primary { font-weight: 600; }
 
 .field {
   display: inline-flex;
@@ -132,7 +133,7 @@ body {
 .custom-color { margin-left: 4px; }
 
 .btn.small { height: 24px; padding: 0 8px; font-size: 12px; }
-.btn.danger { color: #b42318; border-color: #f1b5af; }
+.btn.danger { background: #fff; color: #b42318; border-color: #f1b5af; }
 .btn.danger:hover:not(:disabled) { background: #fdecea; }
 
 /* ---------- Viewer ---------- */
