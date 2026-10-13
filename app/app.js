@@ -246,7 +246,7 @@
     ui.zoomLabel.textContent = `${Math.round(state.zoom * 100)}%`;
     // A dot in the tab title while there are unsaved changes.
     const name = state.saveHandle?.name || state.sources[0]?.name;
-    document.title = `${name ? `${name}${state.dirty ? ' *' : ''} — ` : ''}PDF Editor`;
+    document.title = `${name ? `${name}${state.dirty ? ' *' : ''} — ` : ''}Hale's PDF Editor`;
   }
 
   // -------------------------------------------------------------- loading
@@ -3964,7 +3964,7 @@
   if (!window.PDF_EDITOR_LIB_BASE) {
     const installBtn = $('#install-btn');
     installBtn.hidden = false;
-    installBtn.title = 'Get PDF Editor as an app that works offline (opens in a new tab)';
+    installBtn.title = 'Get Hale\'s PDF Editor as an app that works offline (opens in a new tab)';
     installBtn.addEventListener('click', () => window.open('app/', '_blank', 'noopener'));
   }
 

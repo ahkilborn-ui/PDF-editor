@@ -11,6 +11,7 @@
   const isChromium = /Chrome\/|Chromium\//.test(ua);
   const isFirefox = /Firefox\//.test(ua);
   const isSafari = /Safari\//.test(ua) && !isChromium;
+  const TITLE = 'Install Hale\'s PDF Editor';
   const installed = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
   function idleStatus(msg) {
@@ -46,7 +47,7 @@
   window.addEventListener('appinstalled', () => {
     btn.hidden = true;
     window.__installPrompt = null;
-    idleStatus('Installed. Open PDF Editor from your apps (Start menu, Dock or Launchpad).');
+    idleStatus('Installed. Open Hale\'s PDF Editor from your apps (Start menu, Dock or Launchpad).');
   });
 
   btn.addEventListener('click', async () => {
@@ -59,19 +60,19 @@
       return;
     }
     if (isSafari) {
-      notice('Install PDF Editor', 'In the Safari menu bar choose File → Add to Dock. ' +
-        'PDF Editor then opens from the Dock or Launchpad like any other app, and works offline.');
+      notice(TITLE, 'In the Safari menu bar choose File → Add to Dock. ' +
+        'Hale\'s PDF Editor then opens from the Dock or Launchpad like any other app, and works offline.');
     } else if (isFirefox) {
-      notice('Install PDF Editor', 'Firefox can\'t install web apps. To install PDF Editor, open this page in Chrome or Edge ' +
+      notice(TITLE, 'Firefox can\'t install web apps. To install Hale\'s PDF Editor, open this page in Chrome or Edge ' +
         'and click Install app there. You can keep using it here in Firefox, and this page keeps working without internet once it has loaded.');
     } else if (isEdge) {
-      notice('Install PDF Editor', 'If PDF Editor is already installed, open it from the Start menu (Windows) or Launchpad (Mac). ' +
+      notice(TITLE, 'If Hale\'s PDF Editor is already installed, open it from the Start menu (Windows) or Launchpad (Mac). ' +
         'Otherwise, click the app icon at the right end of the address bar, or open the ⋯ menu → Apps → Install this site as an app.');
     } else if (isChromium) {
-      notice('Install PDF Editor', 'If PDF Editor is already installed, open it from the Start menu (Windows) or Launchpad (Mac). ' +
+      notice(TITLE, 'If Hale\'s PDF Editor is already installed, open it from the Start menu (Windows) or Launchpad (Mac). ' +
         'Otherwise, click the install icon at the right end of the address bar, or open the ⋮ menu → Cast, save and share → Install page as app.');
     } else {
-      notice('Install PDF Editor', 'To install PDF Editor as an app, open this page in Chrome or Edge and click Install app there.');
+      notice(TITLE, 'To install Hale\'s PDF Editor as an app, open this page in Chrome or Edge and click Install app there.');
     }
   });
 })();

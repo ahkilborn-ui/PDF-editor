@@ -1,4 +1,4 @@
-# PDF Editor
+# Hale's PDF Editor
 
 A small PDF editor that runs in your web browser, either as a normal web page or as an app you install on Windows or Mac that works offline. Your files never leave your computer.
 

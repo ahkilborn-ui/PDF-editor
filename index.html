@@ -3,14 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PDF Editor</title>
+  <title>Hale's PDF Editor</title>
+  <meta name="theme-color" content="#879c72">
   <link rel="icon" href="icons/favicon-32.png">
-  <link rel="stylesheet" href="styles.css?v=b51696b849">
+  <link rel="stylesheet" href="styles.css?v=b9585e2e4d">
   <script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
-  <script src="convert.js?v=b51696b849" defer></script>
-  <script src="editable.js?v=b51696b849" defer></script>
-  <script src="app.js?v=b51696b849" defer></script>
+  <script src="convert.js?v=b9585e2e4d" defer></script>
+  <script src="editable.js?v=b9585e2e4d" defer></script>
+  <script src="app.js?v=b9585e2e4d" defer></script>
 </head>
 <body data-tool="select">
   <header class="toolbar">
@@ -80,7 +81,7 @@
 
     <div class="group">
       <button id="ocr-btn" class="btn accent" title="Recognize text in scanned pages so Ctrl+F works" disabled>Make searchable (OCR)</button>
-      <button id="install-btn" class="btn" title="Install PDF Editor as an app that works offline" hidden>Install app</button>
+      <button id="install-btn" class="btn" title="Install Hale's PDF Editor as an app that works offline" hidden>Install app</button>
     </div>
 
     <button id="pages-btn" class="btn pages-toggle" title="Show every page to delete, rotate or reorder them" aria-expanded="false" aria-controls="page-panel">Page viewer</button>
@@ -89,7 +90,7 @@
   <div class="workspace">
   <main id="viewer">
     <div id="drop-hint" class="drop-hint start">
-      <h1>PDF Editor</h1>
+      <h1>Hale's PDF Editor</h1>
       <p class="muted">Edit, highlight, merge and convert PDFs. Everything stays on your computer.</p>
       <div class="start-choices">
         <button type="button" id="start-open" class="start-card">

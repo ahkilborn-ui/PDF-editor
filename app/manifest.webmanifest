@@ -1,13 +1,13 @@
 {
-  "name": "PDF Editor",
-  "short_name": "PDF Editor",
+  "name": "Hale's PDF Editor",
+  "short_name": "Hale's PDF Editor",
   "description": "Edit, highlight, merge and convert PDFs. Works offline.",
   "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#525659",
-  "theme_color": "#2563eb",
+  "theme_color": "#879c72",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },

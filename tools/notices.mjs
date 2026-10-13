@@ -54,7 +54,7 @@ export function writeNotices(root, outFile) {
   const version = (pkg) => JSON.parse(fs.readFileSync(path.join(nm, pkg, 'package.json'), 'utf8')).version;
   const line = '='.repeat(78);
   const parts = [
-    'PDF Editor',
+    'Hale\'s PDF Editor',
     '',
     fs.readFileSync(path.join(root, 'LICENSE'), 'utf8').trim(),
     '',

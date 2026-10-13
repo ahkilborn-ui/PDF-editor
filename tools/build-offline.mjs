@@ -124,12 +124,13 @@ const rootHtml = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8')
 fs.writeFileSync(path.join(ROOT, 'index.html'), rootHtml);
 
 // 5b. index.html: local libraries, manifest, install script; drop browser-only bits.
+const TITLE = '<title>Hale\'s PDF Editor</title>';
+if (!rootHtml.includes(TITLE)) fail(`index.html has no ${TITLE}`);
 let html = rootHtml;
 html = html.replaceAll(CDN, 'vendor/');
 html = html.replace(/\s*<([a-z]+)[^>]*\bdata-browser-only\b[^>]*>[\s\S]*?<\/\1>/g, '');
-html = html.replace('<title>PDF Editor</title>', [
-  '<title>PDF Editor</title>',
-  '  <meta name="theme-color" content="#2563eb">',
+html = html.replace(TITLE, [
+  TITLE,
   '  <link rel="manifest" href="manifest.webmanifest">',
   '  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">',
   '  <script>window.PDF_EDITOR_LIB_BASE = \'vendor/\';</script>',
