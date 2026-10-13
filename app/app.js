@@ -190,6 +190,7 @@
   function markChanged() {
     state.changes++;
     state.dirty = true;
+    scheduleAutosave();
   }
 
   function checkpoint() {
@@ -259,7 +260,7 @@
   // document combined from several files (Save then asks where to save it).
   // Returns, for each usable file, the index of its source (or null if it
   // couldn't be opened).
-  async function openFiles(fileList, append = false, { onFile = null, merged = false } = {}) {
+  async function openFiles(fileList, append = false, { onFile = null, merged = false, restoring = false } = {}) {
     const entries = [...fileList].map((x) => (x instanceof Blob ? { file: x, handle: null } : x));
     const usable = entries.filter((x) => kindOf(x.file));
     const files = usable.map((x) => x.file);
@@ -276,7 +277,7 @@
     append = append && state.order.length > 0;
     if (!append) {
       if (state.dirty && !confirm('You have unsaved changes. Open another file anyway?')) return [];
-      resetDocument();
+      resetDocument({ keepRecovery: restoring });
     }
     const token = state.loadToken;
     const before = append ? snapshot() : null;
@@ -366,7 +367,9 @@
     openMergeDialog();
   });
 
-  function resetDocument() {
+  function resetDocument({ keepRecovery = false } = {}) {
+    if (!keepRecovery) discardRecovery(state.recoveryId);
+    endRecoverySession();
     state.loadToken++;
     for (const s of state.sources) s.doc?.destroy();
     for (const p of allPages()) p.task?.cancel();
@@ -382,6 +385,7 @@
       textReady: Promise.resolve(),
     });
     updateButtons();
+    showRecoverable();
   }
 
   async function addSource(file, token, { password: knownPassword = null } = {}) {
@@ -453,6 +457,7 @@
       }
       const src = state.sources.length;
       state.sources.push({ name: file.name || 'document.pdf', bytes, doc, converted: kind !== 'pdf', password });
+      state.recoverySourcesSaved = false; // the recovery copy needs the new file too
 
       const newPages = [];
       for (let i = 0; i < doc.numPages; i++) {
@@ -1812,6 +1817,7 @@
         updateButtons();
       } else {
         state.changes++;
+        scheduleAutosave();
       }
     });
     el.addEventListener('paste', (e) => {
@@ -2943,6 +2949,7 @@
       }
       // Changes made while saving weren't in this copy: they stay unsaved.
       state.dirty = state.changes !== changesSaved;
+      if (!state.dirty) discardRecovery(state.recoveryId); // saved: nothing to recover
       if (state.dirty) note += ' Changes you made while it was saving aren\'t in it yet: press Ctrl+S again.';
       setStatus(`${handle && !savedToDownloadsInstead ? 'Saved changes to' : 'Saved'} ${name}${note.startsWith(' (') ? '' : '.'}${note}`);
     } catch (err) {
@@ -3700,6 +3707,275 @@
 
   ui.closeBtn.addEventListener('click', closeDocument);
 
+  // ------------------------------------------------------- autosave recovery
+  //
+  // While there are unsaved changes, a recovery copy is kept in this browser
+  // (IndexedDB, on this computer only): the document's files, stored once,
+  // and the edits, updated a moment after each change. If the tab closes or
+  // the browser crashes before saving, the start screen offers to bring the
+  // work back. Saving, or choosing to close without saving, deletes it.
+  // Password-protected documents aren't kept (their unlocked contents would
+  // otherwise sit in browser storage).
+  //
+  // Each open document holds a Web Lock named after its recovery copy, so
+  // another tab never offers to recover work that's still open somewhere.
+
+  const recovery = { db: null, timer: null, lockId: null, release: null };
+  const RECOVERY_LOCK = (id) => `hales-pdf-editor-recovery-${id}`;
+
+  function recoveryDb() {
+    if (!recovery.db) {
+      recovery.db = new Promise((resolve, reject) => {
+        const req = indexedDB.open('hales-pdf-editor-recovery', 1);
+        req.onupgradeneeded = () => {
+          req.result.createObjectStore('docs');  // id -> { sources, handle, fileStamp }
+          req.result.createObjectStore('edits'); // id -> { title, savedAt, pages, rotation, ocr, annots }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      recovery.db.catch(() => { recovery.db = null; });
+    }
+    return recovery.db;
+  }
+
+  // Run `fn(tx)` in a transaction; resolves when it's committed.
+  async function recoveryTx(stores, mode, fn) {
+    const db = await recoveryDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(stores, mode);
+      fn(tx);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  function scheduleAutosave() {
+    if (!state.order.length || typeof indexedDB === 'undefined') return;
+    clearTimeout(recovery.timer);
+    recovery.timer = setTimeout(autosaveNow, 1500);
+  }
+
+  function holdRecoveryLock(id) {
+    if (!navigator.locks || recovery.lockId === id) return;
+    recovery.release?.();
+    recovery.lockId = id;
+    navigator.locks.request(RECOVERY_LOCK(id), () => new Promise((resolve) => { recovery.release = resolve; })).catch(() => {});
+  }
+
+  async function autosaveNow() {
+    if (!state.dirty || !state.order.length) return;
+    if (state.busy) {
+      scheduleAutosave(); // opening / saving: try again shortly
+      return;
+    }
+    if (state.sources.some((s) => s.password)) return;
+    try {
+      if (!state.recoveryId) {
+        state.recoveryId = `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+        state.recoverySourcesSaved = false;
+      }
+      const id = state.recoveryId;
+      holdRecoveryLock(id);
+      const indexOf = new Map(state.order.map((pid, i) => [pid, i]));
+      const edits = {
+        title: state.saveHandle?.name || (state.sources.length > 1
+          ? `${state.sources[0].name} + ${state.sources.length - 1} more file${state.sources.length > 2 ? 's' : ''}`
+          : state.sources[0]?.name || 'Document'),
+        savedAt: Date.now(),
+        pages: state.order.map((pid) => [state.pageById.get(pid).src, state.pageById.get(pid).srcIndex]),
+        rotation: state.order.map((pid) => state.rotation[pid] || 0),
+        ocr: state.order.map((pid) => state.ocr[pid] || null),
+        annots: state.annots.filter((x) => indexOf.has(x.page))
+          .map(({ id: _id, isNew: _isNew, ...x }) => ({ ...x, page: indexOf.get(x.page) })),
+      };
+      if (!state.recoverySourcesSaved) {
+        const record = {
+          sources: state.sources.map((s) => ({ name: s.name, bytes: s.bytes, converted: !!s.converted })),
+          handle: state.saveHandle || null,
+          fileStamp: state.fileStamp || null,
+        };
+        await recoveryTx(['docs'], 'readwrite', (tx) => tx.objectStore('docs').put(record, id));
+        if (state.recoveryId !== id) return; // the document was closed meanwhile
+        state.recoverySourcesSaved = true;
+      }
+      await recoveryTx(['edits'], 'readwrite', (tx) => tx.objectStore('edits').put(edits, id));
+      if (state.recoveryId !== id) discardRecovery(id); // closed while writing
+      pruneRecoveries();
+    } catch (err) {
+      console.warn('Autosave failed', err);
+    }
+  }
+
+  function discardRecovery(id) {
+    if (!id || typeof indexedDB === 'undefined') return;
+    if (id === state.recoveryId) {
+      clearTimeout(recovery.timer);
+      state.recoverySourcesSaved = false;
+    }
+    recoveryTx(['docs', 'edits'], 'readwrite', (tx) => {
+      tx.objectStore('docs').delete(id);
+      tx.objectStore('edits').delete(id);
+    }).catch(() => {});
+  }
+
+  function endRecoverySession() {
+    clearTimeout(recovery.timer);
+    recovery.release?.();
+    recovery.release = null;
+    recovery.lockId = null;
+    state.recoveryId = null;
+    state.recoverySourcesSaved = false;
+  }
+
+  // Recovery copies not open in any tab, newest first.
+  async function listRecoverable() {
+    if (typeof indexedDB === 'undefined') return [];
+    let keys = [];
+    let values = [];
+    await recoveryTx(['edits'], 'readonly', (tx) => {
+      const store = tx.objectStore('edits');
+      const k = store.getAllKeys();
+      const v = store.getAll();
+      k.onsuccess = () => { keys = k.result; };
+      v.onsuccess = () => { values = v.result; };
+    });
+    let held = new Set();
+    try {
+      held = new Set(((await navigator.locks?.query())?.held || []).map((l) => l.name));
+    } catch {
+      // no Web Locks: show them all
+    }
+    return keys.map((id, i) => ({ id, ...values[i] }))
+      .filter((r) => r.id !== state.recoveryId && !held.has(RECOVERY_LOCK(r.id)))
+      .sort((a, b) => b.savedAt - a.savedAt);
+  }
+
+  // Keep the five newest recovery copies.
+  async function pruneRecoveries() {
+    try {
+      const all = await listRecoverable();
+      for (const r of all.slice(5)) discardRecovery(r.id);
+    } catch {
+      // nothing to tidy
+    }
+  }
+
+  // The "Unsaved work found" cards on the start screen.
+  async function showRecoverable() {
+    const box = $('#recovery-list');
+    if (!box) return;
+    let list = [];
+    try {
+      if (!state.order.length) list = await listRecoverable();
+    } catch {
+      list = [];
+    }
+    box.textContent = '';
+    box.hidden = !list.length || state.order.length > 0;
+    for (const r of list) {
+      const item = document.createElement('div');
+      item.className = 'recovery-item';
+      const text = document.createElement('div');
+      text.className = 'recovery-text';
+      const when = new Date(r.savedAt);
+      const sameDay = when.toDateString() === new Date().toDateString();
+      const time = when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      const strong = document.createElement('strong');
+      strong.textContent = 'Unsaved work found';
+      const detail = document.createElement('span');
+      const n = r.annots?.length || 0;
+      detail.textContent = `${r.title} · last changed ${sameDay ? time : `${when.toLocaleDateString()} ${time}`} · ${n} edit${n === 1 ? '' : 's'}`;
+      text.append(strong, detail);
+      const recover = document.createElement('button');
+      recover.type = 'button';
+      recover.className = 'btn primary';
+      recover.textContent = 'Recover';
+      recover.addEventListener('click', () => recoverDocument(r.id));
+      const discard = document.createElement('button');
+      discard.type = 'button';
+      discard.className = 'btn';
+      discard.textContent = 'Discard';
+      discard.addEventListener('click', async () => {
+        const sure = await askConfirm(`Your unsaved changes to ${r.title} will be lost.`, { title: 'Discard unsaved work?', yes: 'Discard', no: 'Keep' });
+        if (!sure) return;
+        discardRecovery(r.id);
+        item.remove();
+        if (!box.children.length) box.hidden = true;
+      });
+      item.append(text, recover, discard);
+      box.append(item);
+    }
+  }
+
+  async function recoverDocument(id) {
+    if (state.busy) return;
+    let saved = null;
+    let edits = null;
+    try {
+      await recoveryTx(['docs', 'edits'], 'readonly', (tx) => {
+        const a = tx.objectStore('docs').get(id);
+        const b = tx.objectStore('edits').get(id);
+        a.onsuccess = () => { saved = a.result; };
+        b.onsuccess = () => { edits = b.result; };
+      });
+    } catch (err) {
+      console.warn(err);
+    }
+    if (!saved || !edits) {
+      await notSaved('That unsaved work could not be read back, sorry.');
+      discardRecovery(id);
+      showRecoverable();
+      return;
+    }
+    const files = saved.sources.map((s) => {
+      const base = s.name.replace(/\.[^.]+$/, '');
+      return { file: new File([s.bytes], `${base}.pdf`, { type: 'application/pdf' }), handle: null };
+    });
+    const results = await openFiles(files, false, { merged: files.length > 1, restoring: true });
+    if (!state.order.length || results.length !== files.length || results.some((r) => r == null)) {
+      setStatus('Could not recover that work.');
+      return;
+    }
+    saved.sources.forEach((s, i) => Object.assign(state.sources[results[i]], { name: s.name, converted: s.converted }));
+    // Pages in the saved order (deleted pages stay out), with their rotation, OCR text and edits.
+    const byKey = new Map([...state.pageById].map(([pid, p]) => [`${p.src}:${p.srcIndex}`, pid]));
+    const order = edits.pages.map(([src, index]) => byKey.get(`${results[src]}:${index}`));
+    if (order.some((pid) => !pid)) {
+      setStatus('Could not recover that work: its pages did not match.');
+      return;
+    }
+    state.order = order;
+    state.rotation = {};
+    state.ocr = {};
+    order.forEach((pid, i) => {
+      if (edits.rotation[i]) state.rotation[pid] = edits.rotation[i];
+      if (edits.ocr[i]) state.ocr[pid] = edits.ocr[i];
+    });
+    state.annots = edits.annots.filter((x) => order[x.page]).map((x) => ({ ...x, id: state.nextId++, page: order[x.page] }));
+    for (const p of allPages()) {
+      if (p.vp.rotation !== viewRotation(p)) applyRotation(p);
+    }
+    layoutPages();
+    allPages().forEach((p) => {
+      drawAnnots(p);
+      drawOcrLayer(p);
+    });
+    if (panel.open) renderPanel();
+    state.undo = [];
+    state.redo = [];
+    state.saveHandle = saved.handle || null;
+    state.fileStamp = saved.fileStamp || null;
+    state.recoveryId = id;
+    state.recoverySourcesSaved = true;
+    holdRecoveryLock(id);
+    markChanged();
+    updateButtons();
+    const time = new Date(edits.savedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    setStatus(`Recovered your unsaved work (last changed ${time}). Press Ctrl+S to save it${state.saveHandle ? ` to ${state.saveHandle.name}` : ''}.`);
+  }
+
   // Dropping files: one file onto the start screen opens it; otherwise the
   // merge window opens with them.
   ui.viewer.addEventListener('dragover', (e) => {
@@ -3972,11 +4248,12 @@
   // Exposed for automated tests / debugging in the console.
   window.pdfEditor = {
     notice: (title, message) => askConfirm(message, { title, yes: null, no: 'OK', danger: false }),
-    state, panel, textIndex, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel, openMergeDialog, closeDocument, merge };
+    state, panel, textIndex, openFiles, save, printPdf, buildPdf, runOcr, setTool, setZoom, movePage, deletePage, deletePages, rotatePages, togglePanel, openMergeDialog, closeDocument, merge, autosaveNow, listRecoverable, recoverDocument };
 
   showColor(state.colors[state.tool]);
   updateHighlightPreview();
   updateButtons();
+  showRecoverable();
   if (typeof PDFLib === 'undefined') {
     setStatus('Could not load the PDF libraries. Check your internet connection and reload.');
   }

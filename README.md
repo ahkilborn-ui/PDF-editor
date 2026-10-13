@@ -83,6 +83,7 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
    - A **\*** after the file name in the tab title means there are unsaved changes.
    - Keep each file open in just one tab or window. If you open a file that's already open in another PDF Editor tab, a popup says so. If the file was saved from somewhere else since you opened it (another tab, or another program), Save asks before replacing it, so changes made there aren't wiped out: **Replace it**, or **Save a copy instead**.
    - After every save, the app reads the file back to check it was written completely.
+   - **Autosave recovery:** while you have unsaved changes, a recovery copy is kept in your browser on this computer (nothing is uploaded). If the browser crashes or the tab closes before you save, the start screen shows **Unsaved work found** next time: click **Recover** to get everything back, then Ctrl+S to save it. Saving, or **Close without saving**, deletes the recovery copy. Password-protected documents aren't kept this way, so their contents never sit in browser storage.
    - If Chrome doesn't give permission to save into the file (it asks again after the browser restarts), a popup explains and offers **Try again**. Nothing is quietly saved to a different file: if you choose **Save a copy**, a popup tells you the copy's name and that the original wasn't changed. The status bar always shows which file was saved, and when.
    - Safari and Firefox can't save over a file, so there each save downloads a new copy.
 

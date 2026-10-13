@@ -255,6 +255,20 @@ body {
   background: var(--gold);
 }
 .drop-hint a { color: var(--primary); font-weight: 600; }
+/* "Unsaved work found" cards on the start screen. */
+.recovery-list { display: flex; flex-direction: column; gap: 8px; margin: 16px 0 0; text-align: left; }
+.recovery-item {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--gold);
+  border-radius: 10px;
+  background: #fbf1d6;
+}
+.recovery-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.recovery-text strong { color: var(--primary); }
+.recovery-text span { overflow: hidden; color: var(--warm-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .start-tagline { margin: 0 0 4px; color: var(--primary); font-size: 14px; font-style: italic; }
 .drop-hint ul { padding-left: 20px; }
 .drop-hint li { margin: 4px 0; }
