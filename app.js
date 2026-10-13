@@ -2735,7 +2735,7 @@
       const words = state.ocr[page.id] || [];
       if (!annots.length && !words.length) return;
       // Wrap the existing content in q/Q so its graphics state can't skew our additions.
-      target.translateContent(0, 0);
+      window.PdfEditable.wrapPage(out, target);
       const vp = page.vp;
       const rot = vp.rotation;
       const toPdf = (x, y) => vp.convertToPdfPoint(x, y);

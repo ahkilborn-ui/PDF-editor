@@ -18,6 +18,9 @@
 
   const ITEM_KEY = 'PDFEditorItem';
   const SEARCH_KEY = 'PDFEditorSearchText';
+  // Marks the "save state … restore state" streams each save wraps a page's
+  // contents in, so reopening removes exactly those and nothing else.
+  const WRAP_KEY = 'PDFEditorWrap';
   const FORMAT_VERSION = 1;
 
   function rgbOf(hex) {
@@ -182,7 +185,7 @@
       if (contents instanceof L.PDFArray) {
         for (let i = contents.size() - 1; i >= 0; i--) {
           const stream = doc.context.lookup(contents.get(i));
-          if (stream?.dict?.get(L.PDFName.of(SEARCH_KEY))) {
+          if (stream?.dict?.get(L.PDFName.of(SEARCH_KEY)) || stream?.dict?.get(L.PDFName.of(WRAP_KEY))) {
             contents.remove(i);
             changed = true;
           }
@@ -267,6 +270,11 @@
       if (!(contents instanceof L.PDFArray)) continue;
       const n = contents.size();
       const trimmed = (i) => textOf(contents.get(i))?.trim();
+      // Files saved before the wrappers were marked: the wrappers are bare
+      // "q" (or "q 1 0 0 1 0 0 cm") streams at the very start and bare "Q"
+      // streams at the very end. Remove them only in matched pairs, outermost
+      // first (each removed q is exactly the one its removed Q closes), and
+      // stop at the first stream that is anything else.
       let lead = 0;
       while (lead < n && /^q(\s+1 0 0 1 0 0 cm)?$/.test(trimmed(lead) ?? '')) lead++;
       let tail = n;
@@ -277,9 +285,9 @@
         else if (t !== '') break;
         tail--;
       }
-      if (lead && closes === lead) {
-        for (let i = n - 1; i >= tail; i--) contents.remove(i);
-        for (let i = lead - 1; i >= 0; i--) contents.remove(i);
+      if (closes) {
+        for (let i = n - 1; i >= tail; i--) contents.remove(i); // the Qs (and empty streams between them)
+        for (let i = closes - 1; i >= 0; i--) contents.remove(i); // the outermost qs
       }
       for (let i = 0; i < contents.size(); i++) allText += `${textOf(contents.get(i)) ?? ''}\n`;
     }
@@ -331,5 +339,18 @@
     return out;
   }
 
-  window.PdfEditable = { writeItems, readItems, wrapText, dropUnused };
+  /**
+   * Wrap a page's contents in "save state … restore state", so edits drawn
+   * after it start from a clean state. Unlike pdf-lib's translateContent, the
+   * two streams are marked, so reopening the file removes exactly them.
+   */
+  function wrapPage(doc, page) {
+    const ctx = doc.context;
+    page.node.normalize();
+    const start = ctx.register(ctx.flateStream('q\n', { [WRAP_KEY]: true }));
+    const end = ctx.register(ctx.flateStream('Q\n', { [WRAP_KEY]: true }));
+    page.node.wrapContentStreams(start, end);
+  }
+
+  window.PdfEditable = { writeItems, readItems, wrapText, dropUnused, wrapPage };
 })();
