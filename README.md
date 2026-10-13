@@ -14,6 +14,7 @@ It can:
 - **Merge**: a merge window where you add files, put them in order and combine them into one PDF. You can mix PDFs, photos and Word files.
 - **Page viewer**: a panel showing every page, where you can tick pages to delete or rotate, delete a range (for example pages 3 to 7), rotate pages, or drag them into a new order.
 - **Make searchable (OCR)**: reads the words on scanned pages so <kbd>Ctrl</kbd>+<kbd>F</kbd> (<kbd>⌘</kbd>+<kbd>F</kbd> on Mac) can find them, both in the editor and in the saved file in any PDF reader.
+- **Autosave recovery**: if the browser crashes or the tab closes before you save, your unsaved work is offered back the next time you open the editor ([how it works](#autosave-recovery)).
 
 **Free to use, no account.** Open https://ahkilborn-ui.github.io/PDF-editor/ and start. It works best in **Chrome or Edge** on Windows or Mac; in Firefox and Safari everything works, but each save downloads a new copy instead of updating the file you opened ([why](#firefox-and-safari)).
 
@@ -83,7 +84,7 @@ Firefox can't install web apps, but the offline app still works offline in a Fir
    - A **\*** after the file name in the tab title means there are unsaved changes.
    - Keep each file open in just one tab or window. If you open a file that's already open in another PDF Editor tab, a popup says so. If the file was saved from somewhere else since you opened it (another tab, or another program), Save asks before replacing it, so changes made there aren't wiped out: **Replace it**, or **Save a copy instead**.
    - After every save, the app reads the file back to check it was written completely.
-   - **Autosave recovery:** while you have unsaved changes, a recovery copy is kept in your browser on this computer (nothing is uploaded). If the browser crashes or the tab closes before you save, the start screen shows **Unsaved work found** next time: click **Recover** to get everything back, then Ctrl+S to save it. Saving, or **Close without saving**, deletes the recovery copy. Password-protected documents aren't kept this way, so their contents never sit in browser storage.
+   - Unsaved work is kept as a recovery copy until you save, in case the browser crashes: see [Autosave recovery](#autosave-recovery).
    - If Chrome doesn't give permission to save into the file (it asks again after the browser restarts), a popup explains and offers **Try again**. Nothing is quietly saved to a different file: if you choose **Save a copy**, a popup tells you the copy's name and that the original wasn't changed. The status bar always shows which file was saved, and when.
    - Safari and Firefox can't save over a file, so there each save downloads a new copy.
 
@@ -141,6 +142,24 @@ Saving fixes most problems by itself:
 
 You'll still see a red **Not saved** popup if you close the save window without choosing a place (click **Choose where to save**), or if something goes wrong that the app can't fix (click **Try again**). Closing the tab with unsaved changes asks you to confirm first.
 
+### Autosave recovery
+
+If your browser crashes, the computer restarts, or you close the tab before saving, your work isn't lost:
+
+1. While you have unsaved changes, the editor keeps a recovery copy in your browser, updated a couple of seconds after each change. It stays on your computer: nothing is uploaded, and your PDF file isn't changed until you press **Save**.
+2. The next time you open the editor, the start screen shows a gold **Unsaved work found** box with the file name, when it was last changed and how many edits it has.
+3. Click **Recover**. Everything comes back: highlights, text, boxes, drawings, deleted and reordered pages, rotations and OCR text. The file name in the tab shows a **\***, because it isn't saved yet.
+4. Press <kbd>Ctrl</kbd>+<kbd>S</kbd> to save it into your original file, as usual.
+
+Or click **Discard** if you don't want it.
+
+Good to know:
+
+- Once you save, or choose **Close without saving**, the recovery copy is deleted.
+- If the same document is still open in another tab, it isn't offered for recovery (so you don't end up with two copies).
+- **Password-protected PDFs aren't kept**, so their contents never sit in browser storage. Save those as you go.
+- The recovery copy only exists in the browser on the computer where you were working, it's lost when a private/incognito window closes, and clearing your browsing data deletes it. It's a safety net, not a replacement for saving.
+
 ### Firefox and Safari
 
 Everything works in Firefox and Safari except saving straight into the file you opened: those browsers don't let websites change files on your computer, so each save downloads a new copy (usually to Downloads) with all your edits. The start screen says so in those browsers. For saving into the same file, use Chrome or Edge. In Firefox you can also turn on **Settings → Always ask you where to save files** and pick the original file when saving.
@@ -193,7 +212,7 @@ In the browser version, the first run downloads the English language data (about
 - Bookmarks and fillable form fields are kept when you only delete pages or add files to the end. If you reorder the original pages, or put another file's pages before them, the saved PDF is rebuilt from its pages and those are lost.
 - Typed text uses Helvetica, which only covers Latin characters. Other characters are saved as `?`.
 - OCR is English only.
-- Autosave recovery only lives in the browser where you were working: it isn't available on another computer or in a different browser, it doesn't work in private/incognito windows once they're closed, and clearing your browsing data deletes it. It's a safety net, not a replacement for pressing Save.
+- Autosave recovery only works in the browser and on the computer where you were working (see [Autosave recovery](#autosave-recovery)).
 - Converted Word pages are stored as high-resolution pictures with the real text invisibly on top. That makes them look right and searchable, but the text isn't perfectly sharp when you zoom far in. Fonts that aren't on your computer, such as Calibri on a Mac, are replaced with similar ones, so line breaks can differ slightly from Word. For an exact copy, use **File → Save as PDF** in Word, or **File → Download → PDF** in Google Docs.
 
 
