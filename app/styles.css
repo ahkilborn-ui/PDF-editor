@@ -255,7 +255,6 @@ body {
   background: var(--gold);
 }
 .drop-hint a { color: var(--primary); font-weight: 600; }
-.drop-hint .muted + .start-tagline { margin-top: -6px; }
 .start-tagline { margin: 0 0 4px; color: var(--primary); font-size: 14px; font-style: italic; }
 .drop-hint ul { padding-left: 20px; }
 .drop-hint li { margin: 4px 0; }
@@ -630,6 +629,9 @@ body .annot.txt.editing { pointer-events: auto; cursor: text; }
 .thumb-size + .icon-btn { margin-left: 4px; }
 .icon-btn.small-icon { width: 26px; height: 26px; margin: 0; border: 1px solid var(--border); font-size: 17px; }
 .panel-range-btn { justify-content: center; }
+/* Not gold: an outlined button, so it doesn't compete with the page actions. */
+.btn.panel-range-btn { background: var(--cream-card); border-color: #d9a59f; color: #9b1c12; }
+.btn.panel-range-btn:hover:not(:disabled) { background: #fbeae7; }
 
 /* "Delete pages" drops down once any page is ticked. */
 .panel-selection {
