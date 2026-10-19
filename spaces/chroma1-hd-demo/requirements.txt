@@ -1,7 +1,6 @@
 diffusers>=0.35.0
-transformers>=4.44.0
+transformers
 accelerate
+safetensors
 sentencepiece
 protobuf
-torch
-spaces

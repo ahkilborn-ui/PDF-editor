@@ -1,9 +1,10 @@
+import spaces  # must come before torch / diffusers so ZeroGPU can patch CUDA
+
 import os
 import random
 
 import gradio as gr
 import numpy as np
-import spaces
 import torch
 from diffusers import ChromaPipeline
 
@@ -23,16 +24,41 @@ else:
     pipe.to("cuda")
 
 
-def get_duration(prompt, negative_prompt, seed, randomize_seed, width, height,
-                 guidance_scale, num_inference_steps, progress=None):
-    # Roughly scale the ZeroGPU reservation with the amount of work requested.
-    pixels = width * height / (1024 * 1024)
-    return int(min(300, 15 + num_inference_steps * 1.0 * max(pixels, 0.25)))
+def get_duration(prompt, negative_prompt=DEFAULT_NEGATIVE, seed=433, randomize_seed=True,
+                 width=1024, height=1024, guidance_scale=3.0, num_inference_steps=40,
+                 *args, **kwargs):
+    # Scale the ZeroGPU reservation with steps and resolution.
+    scale = max(int(width) * int(height), 256 * 256) / (1024 * 1024)
+    return min(240, max(45, int(25 + int(num_inference_steps) * 2.2 * scale)))
 
 
 @spaces.GPU(duration=get_duration)
-def infer(prompt, negative_prompt, seed, randomize_seed, width, height,
-          guidance_scale, num_inference_steps, progress=gr.Progress(track_tqdm=True)):
+def generate(
+    prompt: str,
+    negative_prompt: str = DEFAULT_NEGATIVE,
+    seed: int = 433,
+    randomize_seed: bool = True,
+    width: int = 1024,
+    height: int = 1024,
+    guidance_scale: float = 3.0,
+    num_inference_steps: int = 40,
+    progress=gr.Progress(track_tqdm=True),
+):
+    """Generate an image from a text prompt with Chroma1-HD.
+
+    Args:
+        prompt: Text description of the image to generate.
+        negative_prompt: Things to steer the image away from.
+        seed: Random seed, used when randomize_seed is False.
+        randomize_seed: Pick a new random seed for each generation.
+        width: Image width in pixels (multiple of 32, 256-2048).
+        height: Image height in pixels (multiple of 32, 256-2048).
+        guidance_scale: Classifier-free guidance strength.
+        num_inference_steps: Number of denoising steps.
+
+    Returns:
+        The generated image and the seed that was used.
+    """
     if not prompt or not prompt.strip():
         raise gr.Error("Please enter a prompt.")
     if randomize_seed:
@@ -61,7 +87,7 @@ css = """
 #col-container { margin: 0 auto; max-width: 960px; }
 """
 
-with gr.Blocks(css=css, title="Chroma1-HD") as demo:
+with gr.Blocks(title="Chroma1-HD") as demo:
     with gr.Column(elem_id="col-container"):
         gr.Markdown(
             "# Chroma1-HD\n"
@@ -94,15 +120,23 @@ with gr.Blocks(css=css, title="Chroma1-HD") as demo:
                 guidance_scale = gr.Slider(label="Guidance scale", minimum=1.0, maximum=10.0, step=0.1, value=3.0)
                 num_inference_steps = gr.Slider(label="Steps", minimum=1, maximum=60, step=1, value=40)
 
-        gr.Examples(examples=examples, inputs=[prompt])
+        gr.Examples(
+            examples=examples,
+            inputs=[prompt],
+            outputs=[result, seed],
+            fn=generate,
+            cache_examples=True,
+            cache_mode="lazy",
+        )
 
     gr.on(
         triggers=[run_button.click, prompt.submit],
-        fn=infer,
+        fn=generate,
         inputs=[prompt, negative_prompt, seed, randomize_seed, width, height,
                 guidance_scale, num_inference_steps],
         outputs=[result, seed],
+        api_name="generate",
     )
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.queue(max_size=20).launch(css=css, mcp_server=True)
