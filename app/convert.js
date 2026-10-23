@@ -211,7 +211,12 @@
     host.append(styleHost, body);
     document.body.append(host);
     try {
-      await window.docx.renderAsync(file, body, styleHost, {
+      const prepared = await matchWordSpacing(file);
+      // docx-preview turns on the browser's automatic hyphenation, but Word
+      // only hyphenates when the document asks for it. (Hyphenated words also
+      // came out cut off in the page pictures on Windows and Mac.)
+      if (!prepared.autoHyphenation) host.classList.add('no-hyphens');
+      await window.docx.renderAsync(prepared.file, body, styleHost, {
         inWrapper: true,
         breakPages: true,
         ignoreWidth: false,
@@ -225,6 +230,7 @@
       });
       await document.fonts.ready;
       await Promise.all([...body.querySelectorAll('img')].map((im) => im.decode().catch(() => {})));
+      fitSpacerRuns(body);
 
       const sections = [...body.querySelectorAll('section.docx')];
       if (!sections.length) throw new Error('no pages found in this document');
@@ -242,6 +248,215 @@
       return doc.save();
     } finally {
       host.remove();
+    }
+  }
+
+  // How tall Word's "single" line spacing is, relative to the font size: Word
+  // uses the font's own line height (about 1.15 for Times New Roman, Arial and
+  // Calibri), while docx-preview turns "single" into a CSS line-height of 1.
+  const WORD_SINGLE_LINE = 1.15;
+
+  // Correct the paragraph spacing docx-preview gets wrong, by adjusting the
+  // file's spacing settings before it reads them:
+  // - "Auto" spacing before/after (Word's HTML-style spacing, used by the
+  //   "Normal (Web)" style) is 14 pt in Word; docx-preview ignored the auto
+  //   flag and used the fallback value (often 5 pt), squashing paragraphs.
+  // - Proportional line spacing is relative to the font's line height in
+  //   Word, not to its size, so lines came out too tight.
+  // - A line spacing without a rule means "auto" in Word; docx-preview read it
+  //   as an exact height.
+  async function matchWordSpacing(file) {
+    try {
+      const zip = await window.JSZip.loadAsync(file);
+      const settings = await zip.file('word/settings.xml')?.async('string');
+      const autoHyphenation = !!settings && /<w:autoHyphenation(?![^>]*w:val="(?:0|false|off)")[^>]*\/>/.test(settings);
+      await applyContextualSpacing(zip);
+      const parts = Object.keys(zip.files).filter((n) => /^word\/(document|styles|numbering|footnotes|endnotes|header\d*|footer\d*)\.xml$/.test(n));
+      let changed = false;
+      for (const name of parts) {
+        const xml = await zip.file(name).async('string');
+        let fixed = xml.replace(/<w:spacing\b([^>]*?)\/>/g, (m, attrs) => `<w:spacing${fixSpacing(attrs)}/>`);
+        // Bullets drawn with Symbol / Wingdings characters only show in those
+        // fonts (Windows); use the matching standard characters instead.
+        if (name === 'word/numbering.xml') fixed = fixed.replace(/[\uf0a7\uf0b7\uf0d8\uf0fc\uf06e\uf076\uf0a8\uf0d7]/g, (ch) => SYMBOL_BULLETS[ch]);
+        if (fixed !== xml) {
+          zip.file(name, fixed);
+          changed = true;
+        }
+      }
+      return { file: changed ? await zip.generateAsync({ type: 'blob' }) : file, autoHyphenation };
+    } catch (err) {
+      console.warn('Could not adjust the Word spacing; converting as is', err);
+      return { file, autoHyphenation: false };
+    }
+  }
+
+  // Word's "Don't add space between paragraphs of the same style"
+  // (contextualSpacing, used by List Paragraph): docx-preview ignores it, which
+  // put extra space between every bullet. Write it out as zero spacing
+  // between neighbouring paragraphs of the same style.
+  async function applyContextualSpacing(zip) {
+    const W = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+    const stylesXml = await zip.file('word/styles.xml')?.async('string');
+    const docFile = zip.file('word/document.xml');
+    if (!stylesXml || !docFile) return;
+    const parser = new DOMParser();
+    const styles = parser.parseFromString(stylesXml, 'application/xml');
+    const kids = (el, name) => [...el.childNodes].filter((n) => n.nodeType === 1 && n.namespaceURI === W && n.localName === name);
+    const kid = (el, name) => (el ? kids(el, name)[0] : undefined);
+    const isOn = (el) => !!el && !['0', 'false', 'off'].includes(el.getAttributeNS(W, 'val'));
+    const info = new Map();
+    let defaultStyle = null;
+    for (const st of styles.getElementsByTagNameNS(W, 'style')) {
+      if (st.getAttributeNS(W, 'type') !== 'paragraph') continue;
+      const id = st.getAttributeNS(W, 'styleId');
+      const cs = kid(kid(st, 'pPr'), 'contextualSpacing');
+      info.set(id, { basedOn: kid(st, 'basedOn')?.getAttributeNS(W, 'val'), contextual: cs ? isOn(cs) : undefined });
+      if (['1', 'true', 'on'].includes(st.getAttributeNS(W, 'default'))) defaultStyle = id;
+    }
+    const styleContextual = (id, depth = 0) => {
+      const s = info.get(id);
+      if (!s || depth > 20) return false;
+      return s.contextual !== undefined ? s.contextual : styleContextual(s.basedOn, depth + 1);
+    };
+    if (![...info.keys()].some((id) => styleContextual(id))) return;
+
+    const doc = parser.parseFromString(await docFile.async('string'), 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) return;
+    const pInfo = (p) => {
+      const pPr = kid(p, 'pPr');
+      const style = kid(pPr, 'pStyle')?.getAttributeNS(W, 'val') || defaultStyle;
+      const own = kid(pPr, 'contextualSpacing');
+      return { style, contextual: own ? isOn(own) : styleContextual(style) };
+    };
+    const setSpacing = (p, side) => {
+      let pPr = kid(p, 'pPr');
+      if (!pPr) {
+        pPr = doc.createElementNS(W, 'w:pPr');
+        p.insertBefore(pPr, p.firstChild);
+      }
+      let sp = kid(pPr, 'spacing');
+      if (!sp) {
+        sp = doc.createElementNS(W, 'w:spacing');
+        pPr.append(sp);
+      }
+      sp.setAttributeNS(W, `w:${side}`, '0');
+      sp.removeAttributeNS(W, `${side}Autospacing`);
+    };
+    let changed = false;
+    // Paragraphs next to each other in the same container (body, table cell…).
+    const containers = [doc.getElementsByTagNameNS(W, 'body')[0], ...doc.getElementsByTagNameNS(W, 'tc'), ...doc.getElementsByTagNameNS(W, 'txbxContent')];
+    for (const box of containers) {
+      if (!box) continue;
+      const ps = kids(box, 'p');
+      for (let i = 0; i + 1 < ps.length; i++) {
+        if (ps[i].nextElementSibling !== ps[i + 1]) continue; // something (a table…) in between
+        const a = pInfo(ps[i]);
+        const b = pInfo(ps[i + 1]);
+        if (a.style !== b.style) continue;
+        if (a.contextual) setSpacing(ps[i], 'after');
+        if (b.contextual) setSpacing(ps[i + 1], 'before');
+        changed = changed || a.contextual || b.contextual;
+      }
+    }
+    if (changed) zip.file('word/document.xml', new XMLSerializer().serializeToString(doc));
+  }
+
+  // Word's single line height for common fonts (their Windows ascent +
+  // descent, which is what Word uses), relative to the font size.
+  const SINGLE_LINE = {
+    'times new roman': 1.107, 'liberation serif': 1.107, tinos: 1.107,
+    calibri: 1.221, carlito: 1.221,
+    arial: 1.117, 'liberation sans': 1.117, arimo: 1.117, helvetica: 1.117,
+    cambria: 1.172, caladea: 1.172,
+    georgia: 1.136, garamond: 1.12, 'book antiqua': 1.17, 'palatino linotype': 1.17,
+    aptos: 1.2, verdana: 1.215, tahoma: 1.207, 'century gothic': 1.225, 'courier new': 1.133,
+  };
+
+  function singleLineOf(fontFamily) {
+    for (const name of fontFamily.split(',')) {
+      const f = name.trim().replace(/^["']|["']$/g, '').toLowerCase();
+      if (SINGLE_LINE[f]) return SINGLE_LINE[f];
+    }
+    return WORD_SINGLE_LINE;
+  }
+
+  const SYMBOL_BULLETS = {
+    '\uf0b7': '\u2022', // Symbol bullet •
+    '\uf0a7': '\u25aa', // Wingdings small square ▪
+    '\uf0d8': '\u27a2', // Wingdings arrowhead ➢
+    '\uf0fc': '\u2713', // Wingdings check ✓
+    '\uf06e': '\u25a0', // Wingdings square ■
+    '\uf076': '\u2756', // Wingdings diamond ❖
+    '\uf0a8': '\u25e6', // Symbol white bullet ◦
+    '\uf0d7': '\u25b8', // Symbol small triangle ▸
+  };
+
+  function fixSpacing(attrs) {
+    const get = (k) => (attrs.match(new RegExp(`\\bw:${k}="([^"]*)"`)) || [])[1];
+    const set = (k, v) => {
+      const re = new RegExp(`\\bw:${k}="[^"]*"`);
+      attrs = re.test(attrs) ? attrs.replace(re, `w:${k}="${v}"`) : `${attrs} w:${k}="${v}"`;
+    };
+    const drop = (k) => { attrs = attrs.replace(new RegExp(`\\s*\\bw:${k}="[^"]*"`), ''); };
+    const on = (v) => v === '1' || v === 'true' || v === 'on';
+    if (on(get('beforeAutospacing'))) {
+      set('before', 280); // 14 pt
+      drop('beforeAutospacing');
+    }
+    if (on(get('afterAutospacing'))) {
+      set('after', 280);
+      drop('afterAutospacing');
+    }
+    const line = get('line');
+    if (line != null && (get('lineRule') || 'auto') === 'auto') {
+      set('line', Math.round(Number(line) * WORD_SINGLE_LINE));
+      set('lineRule', 'auto');
+    }
+    return attrs;
+  }
+
+  // Documents often push something to the right margin with a long run of
+  // spaces (a date on a résumé line, say). In Word the spaces squeeze into
+  // the margin; in the browser a hair of extra width wraps the date onto the
+  // next line. Tighten such runs just enough to keep the line together.
+  function fitSpacerRuns(root) {
+    // A paragraph's own font size sets a minimum line height in the browser
+    // (in Word, only the text on the line counts). Give each paragraph the
+    // size of its largest text, so lines aren't taller than in Word.
+    for (const p of root.querySelectorAll('section.docx p')) {
+      const spans = [...p.querySelectorAll('span')].filter((sp) => sp.textContent.trim());
+      if (!spans.length) continue;
+      const sizes = spans.map((sp) => parseFloat(getComputedStyle(sp).fontSize));
+      const big = sizes.indexOf(Math.max(...sizes));
+      // Proportional line spacing was written as a multiple of WORD_SINGLE_LINE;
+      // use the main font's own single line height instead.
+      const lh = getComputedStyle(p).lineHeight;
+      const fs = parseFloat(getComputedStyle(p).fontSize);
+      const multiple = lh === 'normal' ? null : parseFloat(lh) / fs / WORD_SINGLE_LINE;
+      p.style.fontSize = `${sizes[big]}px`;
+      if (multiple && p.dataset.lineFixed !== '1') {
+        p.style.lineHeight = String(multiple * singleLineOf(getComputedStyle(spans[big]).fontFamily));
+        p.dataset.lineFixed = '1';
+      }
+      spans.forEach((sp, i) => {
+        if (Math.abs(parseFloat(getComputedStyle(sp).fontSize) - sizes[i]) > 0.01) sp.style.fontSize = `${sizes[i]}px`;
+      });
+    }
+    for (const span of root.querySelectorAll('section.docx span')) {
+      if (!/^[ \u00a0]{8,}$/.test(span.textContent)) continue;
+      const p = span.closest('p');
+      if (!p || !p.lastChild || !span.getClientRects().length) continue;
+      const rest = document.createRange();
+      rest.setStartAfter(span);
+      rest.setEndAfter(p.lastChild);
+      // Anything after the spaces on a later line than where the spaces start?
+      const wraps = () => {
+        const top = span.getClientRects()[0].top;
+        return [...rest.getClientRects()].some((r) => r.width > 0 && r.top - top > 2);
+      };
+      for (let ls = 0; wraps() && ls > -3; ls -= 0.25) span.style.letterSpacing = `${ls - 0.25}px`;
+      if (wraps()) span.style.letterSpacing = ''; // couldn't fit it: leave as it was
     }
   }
 

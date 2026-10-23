@@ -585,7 +585,13 @@ body .annot.txt.editing { pointer-events: auto; cursor: text; }
   top: 0;
   left: -100000px;
   pointer-events: none;
+  /* A Word document's own defaults, not the editor's interface font. */
+  color: #000;
+  font: 12pt/normal "Times New Roman", "Liberation Serif", Tinos, serif;
+  letter-spacing: normal;
 }
+.convert-host.no-hyphens .docx,
+.convert-host.no-hyphens .docx * { hyphens: manual !important; }
 
 /* ---------- Page viewer panel ---------- */
 
