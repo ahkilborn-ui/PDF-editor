@@ -2148,17 +2148,33 @@
       if (line && Math.abs(c.cy - line.cy) < 0.5 * Math.min(c.h, line.h)) line.chars.push(c);
       else lines.push({ cy: c.cy, h: c.h, chars: [c] });
     }
-    // Segments: pieces of a line separated by a wide gap (column gutters).
+    // Segments: pieces of a line separated by a column gutter. A gutter is
+    // either a wide gap or a narrower one that lines up with gaps in the
+    // lines above and below (justified columns set close together).
+    lines.forEach((line) => {
+      line.chars.sort((a, b) => a.x0 - b.x0);
+      line.ink = line.chars.filter((c) => !c.space);
+    });
+    const gutters = findGutters(lines);
     const segs = [];
     lines.forEach((line, li) => {
-      line.chars.sort((a, b) => a.x0 - b.x0);
       let seg = null;
       for (const c of line.chars) {
-        if (!seg || c.x0 - seg.x1 > Math.max(1.5 * c.h, 8)) {
-          seg = { line: li, chars: [], x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1 };
+        c.line = li;
+        // Spaces don't widen a piece: pdf.js can stretch one across a gutter.
+        if (c.space) {
+          if (seg) seg.chars.push(c);
+          continue;
+        }
+        const gap = seg ? c.x0 - seg.x1 : 0;
+        if (!seg || gap > Math.max(1.5 * c.h, 8) ||
+          (gap > 0 && gutters[li].some((g) => g.x0 < c.x0 && g.x1 > seg.x1))) {
+          // Spaces left at the end of the previous piece belong before this one.
+          const carried = [];
+          while (seg && seg.chars.length && seg.chars[seg.chars.length - 1].space) carried.unshift(seg.chars.pop());
+          seg = { line: li, chars: carried, x0: c.x0, x1: c.x1, y0: c.y0, y1: c.y1 };
           segs.push(seg);
         }
-        c.line = li;
         seg.chars.push(c);
         seg.x1 = Math.max(seg.x1, c.x1);
         seg.y0 = Math.min(seg.y0, c.y0);
@@ -2167,6 +2183,54 @@
     });
     page.textIndex = { segs: segs.filter((sg) => sg.chars.some((c) => !c.space)), upright, q, uW: q % 2 ? H : W, uH: q % 2 ? W : H };
     return page.textIndex;
+  }
+
+  // Column gutters on each line: gaps between letters that line up with
+  // gaps in at least GUTTER_RUN neighbouring lines, where the text after the
+  // gap starts at the same place each time (the next column's margin). Word
+  // spaces in justified text can line up for a few lines, but the words after
+  // them don't start at one spot.
+  // Lines that end before the strip or start after it (short last lines of a
+  // paragraph, one column running longer) don't interrupt it; a line printed
+  // across it (a heading) does.
+  const GUTTER_RUN = 6;
+  function findGutters(lines) {
+    const gaps = lines.map((line) => {
+      const out = [];
+      let x0 = -Infinity;
+      for (let i = 1; i < line.ink.length; i++) {
+        x0 = Math.max(x0, line.ink[i - 1].x1);
+        const min = 0.2 * Math.min(line.ink[i - 1].h, line.ink[i].h);
+        if (line.ink[i].x0 - x0 > min) out.push({ x0, x1: line.ink[i].x0, min });
+      }
+      return out;
+    });
+    const result = lines.map(() => []);
+    // Follow the gap [x0, x1] through the lines from `from` in direction `step`.
+    const follow = (from, step, x0, x1, min) => {
+      const margin = x1;
+      let n = 0;
+      for (let j = from; j >= 0 && j < lines.length; j += step) {
+        const ink = lines[j].ink;
+        if (!ink.length) continue;
+        if (ink[ink.length - 1].x1 <= x0 || ink[0].x0 >= x1) continue; // all on one side
+        const g = gaps[j].find((q) => Math.min(x1, q.x1) - Math.max(x0, q.x0) > min);
+        if (!g) break;
+        x0 = Math.max(x0, g.x0);
+        x1 = Math.min(x1, g.x1);
+        if (Math.abs(g.x1 - margin) < 1) n++;
+      }
+      return n;
+    };
+    gaps.forEach((list, li) => {
+      for (const g of list) {
+        // Narrower than a gutter is ever set (a word space in a heading that
+        // happens to sit over the gutter).
+        if (g.x1 - g.x0 < 2.5 * g.min) continue;
+        if (follow(li - 1, -1, g.x0, g.x1, g.min) + follow(li + 1, 1, g.x0, g.x1, g.min) >= GUTTER_RUN) result[li].push(g);
+      }
+    });
+    return result;
   }
 
   // The letter position nearest a point: { seg, k } meaning "before letter k
@@ -2296,7 +2360,7 @@
     if (!rectsByPage.size) return false;
     checkpoint();
     for (const [id, rects] of rectsByPage) {
-      for (const r of mergeLineRects(rects)) {
+      for (const r of selectionInColumns(state.pageById.get(id), rects) || mergeLineRects(rects)) {
         state.annots.push({ id: state.nextId++, page: id, type: 'highlight', ...r, color: state.colors.highlight });
       }
       drawAnnots(state.pageById.get(id));
@@ -2304,6 +2368,18 @@
     sel.removeAllRanges();
     setStatus('Highlighted selected text.');
     return true;
+  }
+
+  // The browser selects in the order text is stored, which often runs
+  // straight across both columns. Keep only the column(s) between where the
+  // selection starts and ends, as the Highlight tool does.
+  function selectionInColumns(page, rects) {
+    const first = rects[0];
+    const last = rects[rects.length - 1];
+    const a = hitText(page, { x: first.x + 0.5, y: first.y + first.h / 2 }, true);
+    const b = hitText(page, { x: last.x + last.w - 0.5, y: last.y + last.h / 2 }, true);
+    const out = a && b ? textSelectionRects(page, a, b) : [];
+    return out.length ? out : null;
   }
 
   // Merge rectangles that sit on the same line and touch, so overlapping
