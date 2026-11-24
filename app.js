@@ -2124,9 +2124,22 @@
     const z = state.zoom;
     const range = document.createRange();
     const chars = [];
+    const kept = new Map(); // letters so far, by 4pt band of height on the page
+    const band = (y) => Math.floor(y / 4);
+    const covered = (c) => {
+      for (let b = band(c.y0); b <= band(c.y1); b++) {
+        for (const o of kept.get(b) || []) {
+          const ox = Math.min(c.x1, o.x1) - Math.max(c.x0, o.x0);
+          const oy = Math.min(c.y1, o.y1) - Math.max(c.y0, o.y0);
+          if (ox > 0.5 * Math.min(c.x1 - c.x0, o.x1 - o.x0) && oy > 0.5 * Math.min(c.h, o.h)) return true;
+        }
+      }
+      return false;
+    };
     for (const span of page.el.querySelectorAll('.textLayer span, .ocrLayer span')) {
       const node = span.firstChild;
       if (!node || node.nodeType !== Node.TEXT_NODE) continue;
+      const spanChars = [];
       for (let i = 0; i < node.data.length; i++) {
         range.setStart(node, i);
         range.setEnd(node, i + 1);
@@ -2137,7 +2150,25 @@
         const c = { x0: Math.min(ax, bx), x1: Math.max(ax, bx), y0: Math.min(ay, by), y1: Math.max(ay, by), space: !node.data[i].trim() };
         c.h = c.y1 - c.y0;
         c.cy = (c.y0 + c.y1) / 2;
+        spanChars.push(c);
+      }
+      // A second copy of text already on the page (an invisible OCR or
+      // "searchable" layer laid over the real text) is skipped: its letters
+      // sit a little off the real ones, with odd sizes, and would blur the
+      // lines and the gap between columns.
+      // Most of a piece of text doubled: skip all of it (spaces and any
+      // letters the copy got wrong). Otherwise skip just the doubled letters.
+      const ink = spanChars.filter((c) => !c.space);
+      const dup = new Set(ink.filter(covered));
+      if (ink.length && dup.size > 0.6 * ink.length) continue;
+      for (const c of spanChars) {
+        if (dup.has(c)) continue;
         chars.push(c);
+        if (c.space) continue;
+        for (let b = band(c.y0); b <= band(c.y1); b++) {
+          if (!kept.has(b)) kept.set(b, []);
+          kept.get(b).push(c);
+        }
       }
     }
     // Lines: letters whose middles are at about the same height.
@@ -2154,6 +2185,7 @@
     lines.forEach((line) => {
       line.chars.sort((a, b) => a.x0 - b.x0);
       line.ink = line.chars.filter((c) => !c.space);
+      line.right = Math.max(...line.ink.map((c) => c.x1));
     });
     const gutters = findGutters(lines);
     const segs = [];
@@ -2213,7 +2245,8 @@
       for (let j = from; j >= 0 && j < lines.length; j += step) {
         const ink = lines[j].ink;
         if (!ink.length) continue;
-        if (ink[ink.length - 1].x1 <= x0 || ink[0].x0 >= x1) continue; // all on one side
+        // All on one side (justified edges wander by a fraction of a point).
+        if (lines[j].right <= x0 + min || ink[0].x0 >= x1 - min) continue;
         const g = gaps[j].find((q) => Math.min(x1, q.x1) - Math.max(x0, q.x0) > min);
         if (!g) break;
         x0 = Math.max(x0, g.x0);
